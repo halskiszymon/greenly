@@ -18,7 +18,18 @@ Web push requires HTTPS — use a Let's Encrypt certificate from Plesk.
    ```
    (Or skip this and use the **NPM install** button in the Node.js panel after each pull.)
 
-### Option B — File Manager
+### Option B — FTPS upload script
+
+```sh
+cp .deploy.env.example .deploy.env   # fill in host, user, password, remote dir
+python3 scripts/deploy.py --dry-run  # lists what would be uploaded
+python3 scripts/deploy.py
+```
+
+Uploads only `git ls-files` (never `config.js`, `data/`, `node_modules/`). `.deploy.env` is gitignored.
+Then run **NPM install** from the Node.js panel.
+
+### Option C — File Manager
 
 Upload the repository contents (without `node_modules/`, `config.js`, `data/`) into `/greenly`,
 then run **NPM install** from the Node.js panel.
