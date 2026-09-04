@@ -161,6 +161,7 @@ img { display: block; max-width: 100%; }
 .check { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .check input { width: 20px; height: 20px; accent-color: var(--water); }
 .range-value { font-weight: 600; }
+.hint { margin: -6px 0 14px; font-size: 13px; color: var(--muted); }
 
 .preview {
   padding: 14px 16px; border-radius: var(--radius); background: var(--water-soft); color: var(--water-ink); margin-bottom: 16px;

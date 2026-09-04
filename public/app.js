@@ -3,17 +3,18 @@
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';
 
+// The pot that holds the roots is what matters; a decorative cachepot only counts when water stays in it.
 const MATERIALS = [
-  ['terracotta', 'Terakota'],
+  ['terracotta', 'Terakota / glina niepolewana — szybko wysycha'],
   ['ceramic', 'Ceramika szkliwiona'],
-  ['plastic', 'Plastik'],
-  ['cachepot', 'Osłonka bez odpływu'],
+  ['plastic', 'Plastik z otworami (także w osłonce)'],
+  ['cachepot', 'Bez otworów odpływowych — woda nie odpływa'],
 ];
 const LIGHTS = [
-  ['sun', 'Pełne słońce'],
-  ['bright', 'Jasno, bez ostrego słońca'],
-  ['partial', 'Półcień'],
-  ['dark', 'Ciemny kąt'],
+  ['sun', 'Pełne słońce — parapet S/W, słońce na liściach'],
+  ['bright', 'Jasno, bez ostrego słońca — przy oknie E/N'],
+  ['partial', 'Półcień — 1–2 m od okna'],
+  ['dark', 'Ciemny kąt — daleko od okna'],
 ];
 const LEVEL_LABEL = {
   species: 'profil gatunku',
@@ -481,7 +482,7 @@ function openForm(ctx) {
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="f-material">Materiał</label>
+          <label for="f-material">Doniczka</label>
           <select id="f-material" name="pot_material">${options(MATERIALS, v.pot_material ?? 'ceramic')}</select>
         </div>
         <div class="field">
@@ -489,6 +490,7 @@ function openForm(ctx) {
           <select id="f-light" name="light">${options(LIGHTS, v.light ?? 'bright')}</select>
         </div>
       </div>
+      <p class="hint">Liczy się doniczka, w której są korzenie. Osłonka nie ma znaczenia — chyba że po podlaniu zostaje w niej woda, wtedy wybierz „bez otworów”.</p>
       <div class="field">
         <label class="check"><input type="checkbox" id="f-dry" name="dry_air" ${v.dry_air ? 'checked' : ''}> Suche powietrze / blisko grzejnika</label>
       </div>
