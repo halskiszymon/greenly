@@ -815,16 +815,20 @@ function renderProfile(pr) {
 }
 
 async function generateProfile(id, btn, refresh = false) {
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Piszę opis…';
+  const card = btn.closest('.card');
+  const saved = card.innerHTML;
+  const think = startThinking(card, 'profile');
   try {
     await api('profile', { json: { id, refresh } });
+    think.finish();
     toast('Opis gotowy.');
-    showPlant(id);
+    setTimeout(() => showPlant(id), reduceMotion.matches ? 0 : 400);
   } catch (err) {
+    think.fail();
+    card.innerHTML = saved;
+    $('#pv-gen-profile')?.addEventListener('click', (e) => generateProfile(id, e.target));
+    $('#pv-refresh-profile')?.addEventListener('click', (e) => generateProfile(id, e.target, true));
     toast(err.message, 'error', 6000);
-    btn.disabled = false;
-    btn.textContent = refresh ? 'Napisz od nowa' : 'Opisz gatunek';
   }
 }
 
@@ -891,23 +895,100 @@ function fillCheckSheet(c, plantId, answered) {
 async function submitFollowUp(e, plantId) {
   e.preventDefault();
   const form = e.target;
-  const btn = form.querySelector('button');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Analizuję…';
+  const answer = form.text.value.trim();
+  const host = document.createElement('div');
+  form.insertAdjacentElement('afterend', host);
+  form.hidden = true;
+  const think = startThinking(host, 'followup');
   try {
     const fd = new FormData();
     fd.append('id', plantId);
     fd.append('parent_id', form.dataset.parent);
-    fd.append('text', form.text.value.trim());
+    fd.append('text', answer);
     const { check } = await api('health', { form: fd });
+    think.finish();
     toast('Diagnoza zaktualizowana.');
-    fillCheckSheet(check, plantId, false);
+    setTimeout(() => fillCheckSheet(check, plantId, false), reduceMotion.matches ? 0 : 500);
     showPlant(plantId); // refresh the list behind the sheet
   } catch (err) {
+    think.fail();
+    host.remove();
+    form.hidden = false;
     toast(err.message, 'error', 6000);
-    btn.disabled = false;
-    btn.textContent = 'Odpowiedz i zaktualizuj diagnozę';
   }
+}
+
+// ---------------------------------------------------------------------------
+// "thinking" panel shown while Claude works — rotating messages, a progress bar
+// paced by an estimate learned from previous runs, elapsed/expected time
+// ---------------------------------------------------------------------------
+const THINK_TEXTS = {
+  checkup: ['Oglądam zdjęcia', 'Sprawdzam liście i ich kolor', 'Porównuję z warunkami, w jakich stoi', 'Sprawdzam rytm podlewania i porę roku', 'Układam zalecenia', 'Jeszcze chwila, dopinam szczegóły'],
+  doctor: ['Oglądam zdjęcia', 'Szukam objawów', 'Zestawiam z Twoim opisem', 'Ważę możliwe przyczyny', 'Sprawdzam, czego brakuje do diagnozy', 'Układam plan działania'],
+  followup: ['Czytam odpowiedzi', 'Wracam do zdjęć', 'Aktualizuję diagnozę', 'Sprawdzam, co jeszcze wykluczyć'],
+  profile: ['Przypominam sobie gatunek', 'Sprawdzam wymagania świetlne', 'Dobieram rytm podlewania do polskiego mieszkania', 'Spisuję typowe problemy', 'Redaguję opis'],
+};
+const THINK_DEFAULT = { checkup: 45, doctor: 45, followup: 35, profile: 30 };
+
+function thinkEstimate(kind) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(`greenly.est.${kind}`) || '[]');
+    if (arr.length) { const s = [...arr].sort((a, b) => a - b); return Math.round(s[Math.floor(s.length / 2)]); }
+  } catch { /* ignore */ }
+  return THINK_DEFAULT[kind] ?? 45;
+}
+
+function thinkRecord(kind, secs) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(`greenly.est.${kind}`) || '[]');
+    arr.push(Math.round(secs));
+    localStorage.setItem(`greenly.est.${kind}`, JSON.stringify(arr.slice(-6)));
+  } catch { /* ignore */ }
+}
+
+/** Renders the panel into `host` and returns {finish, fail}. */
+function startThinking(host, kind) {
+  const est = thinkEstimate(kind);
+  const texts = THINK_TEXTS[kind] ?? THINK_TEXTS.checkup;
+  host.innerHTML = `<div class="thinking" role="status" aria-live="polite">
+    <span class="think-leaf" aria-hidden="true">🌿</span>
+    <p class="think-text"><span class="t">${esc(texts[0])}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+    <div class="think-bar"><span></span></div>
+    <p class="think-time">zwykle ok. ${est} s</p>
+  </div>`;
+  const textEl = host.querySelector('.think-text');
+  const tEl = textEl.querySelector('.t');
+  const bar = host.querySelector('.think-bar span');
+  const timeEl = host.querySelector('.think-time');
+  const started = Date.now();
+  let i = 0;
+
+  const tick = () => {
+    const sec = (Date.now() - started) / 1000;
+    // Ease toward ~92% at the estimate, then creep — never claim "done" before the answer arrives.
+    const x = Math.min(sec / est, 1);
+    const pct = sec <= est ? 92 * (1 - Math.pow(1 - x, 2)) : 92 + 6 * (1 - Math.exp(-(sec - est) / est));
+    bar.style.width = `${pct.toFixed(1)}%`;
+    if (sec <= est) {
+      timeEl.textContent = `minęło ${Math.floor(sec)} s · zwykle ok. ${est} s`;
+    } else {
+      timeEl.textContent = `minęło ${Math.floor(sec)} s · trwa dłużej niż zwykle, model dokładnie ogląda zdjęcia`;
+      timeEl.classList.add('over');
+    }
+  };
+  const swap = () => {
+    i = (i + 1) % texts.length;
+    textEl.classList.add('swap');
+    setTimeout(() => { tEl.textContent = texts[i]; textEl.classList.remove('swap'); }, reduceMotion.matches ? 0 : 300);
+  };
+  tick();
+  const t1 = setInterval(tick, 1000);
+  const t2 = setInterval(swap, 3800);
+  const stop = () => { clearInterval(t1); clearInterval(t2); };
+  return {
+    finish() { stop(); thinkRecord(kind, (Date.now() - started) / 1000); bar.style.width = '100%'; },
+    fail() { stop(); host.replaceChildren(); },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -958,10 +1039,14 @@ function openCheck(p, mode) {
   $('#check-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!uploads.length) return;
-    const btn = $('#check-submit');
-    btn.disabled = true;
-    $('#check-photo').disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Analizuję… to może potrwać do minuty';
+    const form = $('#check-form');
+    const intro = form.previousElementSibling;
+    const host = document.createElement('div');
+    form.insertAdjacentElement('afterend', host);
+    form.hidden = true;
+    intro.hidden = true;
+    el.sheetTitle.textContent = isDoctor ? 'Doktor myśli…' : 'Sprawdzam…';
+    const think = startThinking(host, mode);
     try {
       const fd = new FormData();
       fd.append('id', p.id);
@@ -969,13 +1054,16 @@ function openCheck(p, mode) {
       fd.append('text', $('#check-text').value.trim());
       uploads.forEach((u, i) => fd.append('image', u.blob, `photo-${i + 1}.jpg`));
       const { check } = await api('health', { form: fd });
-      fillCheckSheet(check, p.id, false);
+      think.finish();
+      setTimeout(() => fillCheckSheet(check, p.id, false), reduceMotion.matches ? 0 : 500);
       showPlant(p.id); // refresh the profile behind the sheet
     } catch (err) {
+      think.fail();
+      host.remove();
+      form.hidden = false;
+      intro.hidden = false;
+      el.sheetTitle.textContent = isDoctor ? `Doktor: ${p.name}` : `Kontrola: ${p.name}`;
       toast(err.message, 'error', 7000);
-      btn.disabled = false;
-      $('#check-photo').disabled = false;
-      btn.textContent = isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan';
     }
   });
 }

@@ -318,3 +318,23 @@ img { display: block; max-width: 100%; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--water-soft); border-top-color: var(--water); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* AI "thinking" panel */
+.thinking { text-align: center; padding: 18px 8px 8px; }
+.think-leaf { font-size: 40px; line-height: 1; display: inline-block; animation: leaf-breathe 2.4s ease-in-out infinite; }
+@keyframes leaf-breathe { 0%, 100% { transform: scale(1) rotate(-4deg); opacity: .85; } 50% { transform: scale(1.12) rotate(4deg); opacity: 1; } }
+.think-text { min-height: 44px; margin: 12px 0 6px; font-size: 16px; font-weight: 600; color: var(--ink); transition: opacity .3s ease; }
+.think-text.swap { opacity: 0; }
+.dots { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--water); animation: dot-bounce 1.2s ease-in-out infinite; }
+.dots i:nth-child(2) { animation-delay: .15s; }
+.dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-5px); opacity: 1; } }
+.think-bar { height: 8px; border-radius: 999px; background: var(--water-soft); overflow: hidden; margin: 10px auto 8px; max-width: 320px; }
+.think-bar span { display: block; height: 100%; width: 0; background: var(--water); border-radius: 999px; transition: width .9s linear; }
+.think-time { margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.think-time.over { color: var(--warn); }
+@media (prefers-reduced-motion: reduce) {
+  .think-leaf, .dots i { animation: none; }
+  .think-bar span, .think-text { transition: none; }
+}

@@ -450,7 +450,7 @@ const server = http.createServer(async (req, res) => {
 function fakeAiClient() {
   return {
     beta: { messages: { create: async (params) => {
-      await sleep(800);
+      await sleep(Number(process.env.GREENLY_FAKE_AI) > 1 ? Number(process.env.GREENLY_FAKE_AI) : 800); // ms; GREENLY_FAKE_AI=4000 to watch the thinking panel
       const isProfile = 'pets' in (params.output_config?.format?.schema?.properties ?? {});
       const turn = params.messages.length;
       const body = isProfile
