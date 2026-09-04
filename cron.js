@@ -54,9 +54,16 @@ export async function runCron(config, db) {
   return result;
 }
 
+// CLI entry. No top-level await: this module is also imported by server.js, which
+// Passenger loads with require() (see the note in server.js).
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const config = await loadConfig();
-  const db = openDb();
-  const r = await runCron(config, db);
-  console.log(`cron: due=${r.due} sent=${r.sent} removed=${r.removed} failed=${r.failed}`);
+  (async () => {
+    const config = await loadConfig();
+    const db = openDb();
+    const r = await runCron(config, db);
+    console.log(`cron: due=${r.due} sent=${r.sent} removed=${r.removed} failed=${r.failed}`);
+  })().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
 }

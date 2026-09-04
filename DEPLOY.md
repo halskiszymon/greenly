@@ -157,7 +157,12 @@ Check in this order:
 6. **iOS specifics**: the app must be launched from the Home Screen icon at least once after subscribing;
    iOS drops the subscription if the app is deleted from the Home Screen. Low Power Mode and Focus can delay delivery.
 7. **Service worker stuck on an old version**: the app uses `skipWaiting`, but on iOS force-quit the PWA and reopen it.
-8. **Time zone**: the cron runs at server time; `days_left` is computed with `config.timezone`. If the server clock is
+8. **"Web application could not be started"** on `/api/*` while `/` loads → the Node app crashes on boot.
+   Switch *Application mode* to `development` temporarily and open `/api/plants`: Passenger then prints the
+   real stack trace. Typical: Node < 22.13 (`node:sqlite` missing), NPM install not run (`Cannot find package 'web-push'`),
+   `config.js` missing/invalid, or `ERR_REQUIRE_ASYNC_MODULE` (Passenger `require()`s the startup file — no
+   top-level `await` is allowed in `server.js` or anything it imports; `npm test` guards this). Switch back to `production` afterwards.
+9. **Time zone**: the cron runs at server time; `days_left` is computed with `config.timezone`. If the server clock is
    off, plants are due a day early/late.
 
 ## 10. Updating

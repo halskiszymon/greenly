@@ -15,10 +15,12 @@ import {
 } from './lib.js';
 import { runCron } from './cron.js';
 
-const config = await loadConfig();
-loadCare();
-const db = openDb();
-const TOKEN = tokenFor(config.password);
+// NOTE: no top-level await anywhere in this module graph. Plesk/Passenger loads the
+// startup file with require(), and Node refuses require() on an ESM graph that
+// contains top-level await (ERR_REQUIRE_ASYNC_MODULE). Everything async lives in main().
+let config;
+let db;
+let TOKEN;
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JSON_LIMIT = 2 * 1024 * 1024;
@@ -358,5 +360,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const port = Number(process.env.PORT) || config.port || 8080;
-server.listen(port, () => console.log(`greenLy listening on ${port}`));
+async function main() {
+  config = await loadConfig();
+  loadCare();
+  db = openDb();
+  TOKEN = tokenFor(config.password);
+  const port = Number(process.env.PORT) || config.port || 8080;
+  server.listen(port, () => console.log(`greenLy listening on ${port}`));
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

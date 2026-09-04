@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 export const ROOT = import.meta.dirname;
@@ -341,11 +342,11 @@ export function safeEqual(a, b) {
 // ---------------------------------------------------------------------------
 
 export async function loadConfig() {
-  const file = path.join(ROOT, 'config.js');
+  const file = process.env.GREENLY_CONFIG || path.join(ROOT, 'config.js');
   if (!fs.existsSync(file)) {
     throw new Error('Missing config.js — copy config.example.js to config.js and fill it in.');
   }
-  const mod = await import(`./config.js?ts=${Date.now()}`);
+  const mod = await import(`${pathToFileURL(file).href}?ts=${Date.now()}`);
   const cfg = mod.default ?? mod;
   if (!cfg.password) throw new Error('config.js: "password" must not be empty.');
   if (cfg.timezone) process.env.TZ = cfg.timezone;
