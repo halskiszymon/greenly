@@ -1,17 +1,17 @@
 // sw.js — offline shell cache + web push. API calls always go to the network.
-const CACHE = 'greenly-shell-v1';
-const SHELL = [
-  './',
-  './index.html',
-  './app.js',
-  './styles.css',
-  './manifest.webmanifest',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-];
+const CACHE = 'greenly-shell-v2';
+// Core shell: install fails if any of these is missing (the app cannot work without them).
+const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest'];
+// Best-effort extras: a missing icon must never block installation (a stuck install
+// leaves navigator.serviceWorker.ready pending forever, which breaks push setup).
+const EXTRAS = ['./img/icon-192.png', './img/icon-512.png'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL).then(() => Promise.allSettled(EXTRAS.map((u) => c.add(u)))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -50,8 +50,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: './icons/icon-192.png',
-      badge: './icons/icon-192.png',
+      icon: './img/icon-192.png',
+      badge: './img/icon-192.png',
       tag: data.tag || 'greenly',
       renotify: true,
       data: { url: data.url },

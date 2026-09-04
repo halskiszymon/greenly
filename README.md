@@ -24,7 +24,7 @@ cron.js              daily reminder: node cron.js  (or GET /api/cron?secret=…)
 genkeys.js           prints a VAPID key pair
 care.json            care profiles: groups / species / genus / family
 config.example.js    → copy to config.js (gitignored); all secrets live there
-public/              index.html, app.js, styles.css, sw.js, manifest.webmanifest, icons/
+public/              index.html, app.js, styles.css, sw.js, manifest.webmanifest, img/
 scripts/make-icons.sh  SVG → PNG
 test/                node --test
 data/                greenly.sqlite + photos/ (created on first run, gitignored)

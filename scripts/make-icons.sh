@@ -1,8 +1,8 @@
 #!/bin/sh
-# Rasterize public/icons/*.svg into the PNG sizes the manifest expects.
+# Rasterize public/img/*.svg into the PNG sizes the manifest expects.
 # Uses whichever tool is available: rsvg-convert, ImageMagick (magick/convert) or macOS qlmanage.
 set -e
-cd "$(dirname "$0")/../public/icons"
+cd "$(dirname "$0")/../public/img"
 
 render() { # render <svg> <size> <out.png>
   if command -v rsvg-convert >/dev/null 2>&1; then

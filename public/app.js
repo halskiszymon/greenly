@@ -577,13 +577,21 @@ function urlBase64ToUint8Array(b64) {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
+/** navigator.serviceWorker.ready never settles if the worker failed to install — so give it a deadline. */
+async function swReady(ms = 6000) {
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(
+    'Service worker nie jest aktywny. Zamknij aplikację całkowicie, otwórz ponownie i spróbuj jeszcze raz.')), ms));
+  const reg = await Promise.race([navigator.serviceWorker.ready, timeout]);
+  return reg;
+}
+
 async function refreshPushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     el.btnPush.setAttribute('aria-pressed', 'false');
     return;
   }
   try {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await swReady();
     state.pushSub = await reg.pushManager.getSubscription();
   } catch { state.pushSub = null; }
   el.btnPush.setAttribute('aria-pressed', state.pushSub ? 'true' : 'false');
@@ -599,7 +607,7 @@ el.btnPush.addEventListener('click', async () => {
   }
   el.btnPush.disabled = true;
   try {
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await swReady();
     if (state.pushSub) {
       await api('unsubscribe', { json: { endpoint: state.pushSub.endpoint } });
       await state.pushSub.unsubscribe();
@@ -627,7 +635,7 @@ el.btnPush.addEventListener('click', async () => {
 // boot
 // ---------------------------------------------------------------------------
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.register('./sw.js').catch((err) => console.error('SW registration failed:', err));
 }
 
 document.addEventListener('visibilitychange', () => {
