@@ -191,8 +191,30 @@ export function openDb(file = DB_FILE) {
       auth        TEXT NOT NULL,
       created_at  TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS health_checks (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      plant_id      INTEGER NOT NULL REFERENCES plants(id) ON DELETE CASCADE,
+      parent_id     INTEGER REFERENCES health_checks(id) ON DELETE CASCADE,
+      mode          TEXT NOT NULL,
+      ts            TEXT NOT NULL,
+      photo         TEXT,
+      user_text     TEXT NOT NULL DEFAULT '',
+      result        TEXT NOT NULL,
+      model         TEXT,
+      input_tokens  INTEGER,
+      output_tokens INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS health_checks_plant ON health_checks(plant_id);
   `);
+  // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not alter existing tables).
+  ensureColumn(db, 'plants', 'profile', 'TEXT');
   return db;
+}
+
+/** ALTER TABLE ... ADD COLUMN, only when the column is missing. */
+export function ensureColumn(db, table, column, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 /** Row → API object with computed schedule fields. */
@@ -209,10 +231,13 @@ export function decoratePlant(row, now = new Date()) {
   }
   const g = c.groups[row.group_key] ?? c.groups.universal;
   const level = matchProfile(row).level;
+  let profile = null;
+  if (row.profile) { try { profile = JSON.parse(row.profile); } catch { profile = null; } }
   return {
     ...row,
     dry_air: !!row.dry_air,
     photo: row.photo ? `api/photo/${row.photo}` : null,
+    profile,
     interval,
     next_due,
     days_left,
@@ -220,6 +245,12 @@ export function decoratePlant(row, now = new Date()) {
     group_note: g.note,
     match_level: level,
   };
+}
+
+/** Group-level care info (label, note, light, humidity, temp, placement). */
+export function groupCare(groupKey) {
+  const c = getCare();
+  return c.groups[groupKey] ?? c.groups.universal;
 }
 
 export function listPlants(db, now = new Date()) {
@@ -260,9 +291,58 @@ export function waterPlant(db, id, date = toDateString()) {
 export function deletePlant(db, id) {
   const row = getPlant(db, id);
   if (!row) return false;
+  const checkPhotos = db.prepare('SELECT photo FROM health_checks WHERE plant_id = ? AND photo IS NOT NULL').all(id);
   db.prepare('DELETE FROM plants WHERE id = ?').run(id);
   if (row.photo) fs.rmSync(path.join(PHOTO_DIR, row.photo), { force: true });
+  for (const c of checkPhotos) fs.rmSync(path.join(PHOTO_DIR, c.photo), { force: true });
   return true;
+}
+
+export function setProfile(db, id, profileJson) {
+  db.prepare('UPDATE plants SET profile = ? WHERE id = ?').run(profileJson, id);
+}
+
+export function listWaterings(db, plantId) {
+  return db.prepare('SELECT id, ts FROM waterings WHERE plant_id = ? ORDER BY ts DESC LIMIT 200').all(plantId);
+}
+
+// ---------------------------------------------------------------------------
+// Health checks (Claude analyses)
+// ---------------------------------------------------------------------------
+
+function decorateCheck(row) {
+  if (!row) return null;
+  let result = null;
+  try { result = JSON.parse(row.result); } catch { result = null; }
+  return { ...row, photo: row.photo ? `api/photo/${row.photo}` : null, result };
+}
+
+export function insertCheck(db, c) {
+  const r = db.prepare(`
+    INSERT INTO health_checks (plant_id, parent_id, mode, ts, photo, user_text, result, model, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(c.plant_id, c.parent_id ?? null, c.mode, new Date().toISOString(), c.photo ?? null, c.user_text ?? '',
+    JSON.stringify(c.result), c.model ?? null, c.input_tokens ?? null, c.output_tokens ?? null);
+  return Number(r.lastInsertRowid);
+}
+
+export function getCheck(db, id) {
+  return decorateCheck(db.prepare('SELECT * FROM health_checks WHERE id = ?').get(id));
+}
+
+export function listChecks(db, plantId) {
+  return db.prepare('SELECT * FROM health_checks WHERE plant_id = ? ORDER BY ts DESC LIMIT 100').all(plantId).map(decorateCheck);
+}
+
+/** Root → … → the given check (follow-up conversation), oldest first. Raw photo file names. */
+export function checkChain(db, id) {
+  const chain = [];
+  let row = db.prepare('SELECT * FROM health_checks WHERE id = ?').get(id);
+  while (row) {
+    chain.unshift({ ...row, result: JSON.parse(row.result) });
+    row = row.parent_id ? db.prepare('SELECT * FROM health_checks WHERE id = ?').get(row.parent_id) : null;
+  }
+  return chain;
 }
 
 export function markNotified(db, ids, date = toDateString()) {
@@ -305,18 +385,36 @@ function sniffImage(buf) {
   return null;
 }
 
-/** Validates and stores a data URL. Returns the stored file name. Throws Error with .status on bad input. */
+/** Validates and stores a data URL (thumbnail). Returns the stored file name. Throws Error with .status on bad input. */
 export function storePhoto(dataUrl, plantId) {
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl ?? '');
   if (!m) throw Object.assign(new Error('Nieobsługiwany format zdjęcia.'), { status: 400 });
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length > PHOTO_MAX_BYTES) throw Object.assign(new Error('Zdjęcie jest za duże (limit 600 KB).'), { status: 413 });
+  return storePhotoBuffer(buf, m[1], plantId);
+}
+
+/** Validates magic bytes against the declared type and writes the file. Returns the file name. */
+export function storePhotoBuffer(buf, declaredType, plantId) {
   const type = sniffImage(buf);
-  if (!type || type !== m[1]) throw Object.assign(new Error('Plik nie jest poprawnym obrazem.'), { status: 400 });
+  if (!type || type !== declaredType) throw Object.assign(new Error('Plik nie jest poprawnym obrazem.'), { status: 400 });
   fs.mkdirSync(PHOTO_DIR, { recursive: true });
   const name = `${plantId}-${crypto.randomBytes(4).toString('hex')}.${PHOTO_TYPES[type]}`;
   fs.writeFileSync(path.join(PHOTO_DIR, name), buf);
   return name;
+}
+
+/** Reads a stored photo back as {data (base64), mediaType} — used to re-send the root photo on follow-ups. */
+export function readPhotoBase64(name) {
+  const file = path.join(PHOTO_DIR, name);
+  if (!fs.existsSync(file)) return null;
+  const buf = fs.readFileSync(file);
+  const type = sniffImage(buf);
+  return type ? { data: buf.toString('base64'), mediaType: type } : null;
+}
+
+export function sniffImageType(buf) {
+  return sniffImage(buf);
 }
 
 export function removePhoto(name) {

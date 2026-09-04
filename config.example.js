@@ -16,6 +16,14 @@ export default {
     privateKey: '',
   },
 
+  // Anthropic API key (console.anthropic.com) for plant health check-ups, "doctor" diagnosis
+  // and species profiles. Pay-per-use, no subscription. Leave empty to hide these features.
+  anthropicApiKey: '',
+  // Model for image analysis. Default: Claude Opus 5. Cheaper alternative: 'claude-sonnet-5'.
+  anthropicModel: 'claude-opus-5',
+  // Reasoning effort: 'low' | 'medium' | 'high'. Higher = more thorough and more expensive per analysis.
+  anthropicEffort: 'medium',
+
   // Shared secret for triggering the daily reminder over HTTP
   // (GET /api/cron?secret=...) when CLI cron is not available. Leave empty to disable.
   cronSecret: '',

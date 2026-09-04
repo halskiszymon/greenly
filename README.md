@@ -4,6 +4,10 @@ Self-hosted PWA for watering houseplants. Add a plant from a photo (Pl@ntNet ide
 watering interval computed for that species **and** the conditions it lives in, see a moisture bar per plant,
 tap "Podlej" when you water, and receive a web push reminder when a plant is due.
 
+Optional Claude integration (pay-per-use Anthropic API key): a **check-up** of a plant from a photo with
+recommendations, a **doctor** mode that diagnoses a described problem and can ask follow-up questions, and a
+generated **species care profile** — all stored per plant in its history.
+
 UI language: Polish. Code, comments and docs: English.
 
 ## Stack
@@ -14,12 +18,15 @@ UI language: Polish. Code, comments and docs: English.
 - **Push:** [`web-push`](https://github.com/web-push-libs/web-push) (the only dependency), VAPID, daily cron.
 - **Identification:** Pl@ntNet API (`/v2/identify/all`, free tier 500 req/day). The key lives only in
   `config.js`; `/api/identify` proxies the request so the browser never sees it.
+- **Plant health / profiles (optional):** Claude via `@anthropic-ai/sdk` — one Messages request per analysis
+  (image + plant context → JSON via structured outputs). Key only in `config.js`; `ai.js` builds the prompts.
 
 ## Layout
 
 ```
 server.js            HTTP server: static files from public/ + JSON API under /api/*
 lib.js               DB, care profile matching, interval algorithm (source of truth)
+ai.js                Claude: health check-ups, doctor diagnosis with follow-ups, species profiles
 cron.js              daily reminder: node cron.js  (or GET /api/cron?secret=…)
 genkeys.js           prints a VAPID key pair
 care.json            care profiles: groups / species / genus / family
@@ -89,6 +96,9 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 | GET | `vapid` | `{publicKey}` |
 | POST | `subscribe` / `unsubscribe` | PushSubscription JSON / `{endpoint}` |
 | GET | `photo/<file>` | stored photo, auth required |
+| GET | `plant/<id>` | profile view data: `{plant, care, waterings, checks, ai}` |
+| POST | `health` | multipart: `id`, `mode` (`checkup`\|`doctor`), `text`, `image` — or `parent_id` + `text` to answer the doctor's questions (the root photo is re-sent); → `{check}`; 503 when no Anthropic key |
+| POST | `profile` | `{id, refresh?}` → species care profile written by Claude, cached in `plants.profile` |
 | GET | `cron?secret=…` | runs the reminder; protected by `cronSecret`, not the login token |
 
 ## Database (SQLite, `data/greenly.sqlite`)
@@ -97,6 +107,8 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
   pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
 - `waterings` — id, plant_id, ts
 - `subs` — endpoint (PK), p256dh, auth, created_at
+- `health_checks` — id, plant_id, parent_id (follow-up chain), mode, ts, photo, user_text, result (JSON), model, input_tokens, output_tokens
+- `plants.profile` — cached species profile JSON (added via `ensureColumn()` on start for databases created before it existed)
 
 ## PWA / push
 
@@ -105,6 +117,20 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 - The subscription is created only from a user gesture ("Powiadomienia" button) after `Notification.requestPermission()`.
 - **iPhone:** web push works only in the version added to the Home Screen (iOS 16.4+). Open Safari → Share →
   "Add to Home Screen", launch from the icon, then tap "Powiadomienia" there.
+
+## Claude analyses
+
+`ai.js` sends one request per analysis to `claude-opus-5` (configurable) with adaptive thinking at
+`anthropicEffort` (default `medium`), `output_config.format` = JSON schema (`HEALTH_SCHEMA` / `PROFILE_SCHEMA`) and
+server-side refusal fallbacks (`fallbacks: "default"`). The user message carries the photo (base64, ≤ 1200 px from the
+client) plus a plain-text context block: species, care group and its tip, pot, light, dry air, computed interval,
+days since watering, owner's note, date. Doctor follow-ups replay the chain (root photo + context, assistant JSON,
+answers) so the model updates its verdict; `questions` is empty when nothing is missing.
+
+Token usage is stored per check and the UI shows an approximate cost from a small per-model price table in `app.js`.
+Typical check-up on Opus 5: ~2–3k input + ~1–3k output tokens (thinking included) ≈ $0.02–0.08.
+
+`GREENLY_FAKE_AI=1 node server.js` swaps in a canned client (no network) for UI work without a key.
 
 ## Cron
 

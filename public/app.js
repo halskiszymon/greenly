@@ -70,12 +70,15 @@ const state = {
   token: localStorage.getItem(TOKEN_KEY),
   plants: [],
   pushSub: null,
+  ai: false,       // server has an Anthropic key → check-ups, doctor and species profiles available
+  plantView: null, // currently open plant id
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = {
   login: $('#view-login'),
   app: $('#view-app'),
+  plantView: $('#view-plant'),
   actions: $('#topbar-actions'),
   list: $('#plants'),
   empty: $('#empty'),
@@ -149,6 +152,7 @@ function photoUrl(p) {
 function showLogin() {
   el.login.hidden = false;
   el.app.hidden = true;
+  el.plantView.hidden = true;
   el.actions.hidden = true;
   $('#login-password').focus();
 }
@@ -189,13 +193,16 @@ async function enterApp() {
   el.iosHint.hidden = !(isIOS && !isStandalone);
   await refresh();
   refreshPushState();
+  route();
 }
 
 async function refresh() {
   try {
-    const { plants } = await api('plants');
+    const { plants, ai } = await api('plants');
     state.plants = plants;
+    state.ai = !!ai;
     renderList();
+    if (state.plantView) showPlant(state.plantView);
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -224,7 +231,7 @@ function renderList() {
     if (!li) {
       li = tpl.content.firstElementChild.cloneNode(true);
       li.dataset.id = p.id;
-      li.querySelector('.plant-main').addEventListener('click', () => openEdit(p.id));
+      li.querySelector('.plant-main').addEventListener('click', () => { location.hash = `plant/${p.id}`; });
       li.querySelector('.btn-water').addEventListener('click', () => water(p.id, li));
     }
     li.classList.toggle('is-overdue', p.days_left !== null && p.days_left < 0);
@@ -544,10 +551,11 @@ function openForm(ctx) {
         note: form.note.value,
       };
       if (ctx.thumb) payload.photo = ctx.thumb;
-      await api('save', { json: payload });
+      const { plant } = await api('save', { json: payload });
       toast(isEdit ? 'Zapisano.' : 'Dodano roślinę.');
       closeSheet();
       await refresh();
+      if (!isEdit) location.hash = `plant/${plant.id}`;
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -561,6 +569,8 @@ function openForm(ctx) {
       await api('delete', { json: { id: ctx.id } });
       toast('Usunięto.');
       closeSheet();
+      state.plantView = null;
+      location.hash = '';
       await refresh();
     } catch (err) {
       toast(err.message, 'error');
@@ -634,6 +644,298 @@ el.btnPush.addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// plant profile view  (#plant/<id>)
+// ---------------------------------------------------------------------------
+const STATUS_LABEL = { healthy: 'W porządku', watch: 'Obserwuj', sick: 'Wymaga działania' };
+const CONF_LABEL = { low: 'niska pewność', medium: 'średnia pewność', high: 'wysoka pewność' };
+const MODE_LABEL = { checkup: 'Kontrola', doctor: 'Doktor' };
+// USD per 1M tokens (input, output) — only for the approximate cost shown under each analysis.
+const PRICES = { 'claude-opus-5': [5, 25], 'claude-sonnet-5': [2, 10], 'claude-haiku-4-5': [1, 5] };
+
+const label = (list, key) => list.find(([k]) => k === key)?.[1] ?? key;
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDateTime = (iso) => new Date(iso).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+function route() {
+  if (!state.token) return;
+  const m = /^#plant\/(\d+)$/.exec(location.hash);
+  if (m) {
+    showPlant(Number(m[1]));
+  } else {
+    state.plantView = null;
+    el.plantView.hidden = true;
+    el.app.hidden = false;
+    window.scrollTo(0, 0);
+  }
+}
+
+async function showPlant(id) {
+  state.plantView = id;
+  el.app.hidden = true;
+  el.plantView.hidden = false;
+  try {
+    const data = await api(`plant/${id}`);
+    if (state.plantView !== id) return;
+    state.ai = !!data.ai;
+    renderPlant(data);
+  } catch (err) {
+    toast(err.message, 'error');
+    location.hash = '';
+  }
+}
+
+function approxCost(check) {
+  const p = PRICES[check.model];
+  if (!p || check.input_tokens == null) return '';
+  const usd = (check.input_tokens * p[0] + (check.output_tokens ?? 0) * p[1]) / 1e6;
+  return ` · ≈ $${usd.toFixed(3)}`;
+}
+
+function renderPlant({ plant: p, care, waterings, checks }) {
+  const photo = photoUrl(p);
+  const pct = fillPercent(p);
+  const intervals = [];
+  for (let i = 0; i + 1 < waterings.length; i++) {
+    intervals.push((new Date(waterings[i].ts) - new Date(waterings[i + 1].ts)) / 86400000);
+  }
+  const avg = intervals.length ? Math.round(intervals.reduce((a, b) => a + b, 0) / intervals.length) : null;
+  const answered = new Set(checks.map((c) => c.parent_id).filter(Boolean));
+
+  el.plantView.innerHTML = `
+    <a class="back" href="#">← Rośliny</a>
+    <div class="pv-head">
+      <span class="thumb ${photo ? 'has-photo' : ''}"><img alt="" ${photo ? `src="${esc(photo)}"` : ''}></span>
+      <div>
+        <h1>${esc(p.name)}</h1>
+        <div class="sci">${esc(p.species) || '—'}${p.common ? ` · ${esc(p.common)}` : ''}</div>
+        <div class="chips"><span class="chip soft level-${esc(p.match_level)}">${esc(p.group_label)} · ${LEVEL_LABEL[p.match_level]}</span></div>
+      </div>
+    </div>
+    <div class="pv-status ${p.days_left !== null && p.days_left < 0 ? 'is-overdue' : ''} ${p.days_left === 0 ? 'is-today' : ''}">
+      <span class="bar ${p.days_left === null ? 'unknown' : ''}"><span class="bar-fill ${pct < 20 ? 'low' : ''}" style="width:${pct}%"></span></span>
+      <span class="plant-meta">${esc(metaText(p))}</span>
+      <button type="button" class="btn btn-water" id="pv-water">Podlej</button>
+    </div>
+    <div class="pv-actions">
+      <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Kontrola</button>
+      <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Doktor</button>
+      <button type="button" class="btn" id="pv-edit">Edytuj</button>
+    </div>
+
+    <section class="section">
+      <h2>Warunki</h2>
+      <div class="card"><dl class="kv">
+        <dt>Doniczka</dt><dd>${p.pot_cm} cm · ${esc(label(MATERIALS, p.pot_material))}</dd>
+        <dt>Światło</dt><dd>${esc(label(LIGHTS, p.light))}</dd>
+        <dt>Powietrze</dt><dd>${p.dry_air ? 'suche / grzejnik w pobliżu' : 'normalne'}</dd>
+        <dt>Podlewanie</dt><dd>co ${p.interval} ${dni(p.interval)} o tej porze roku${avg ? ` · faktycznie średnio co ${avg} ${dni(avg)}` : ''}</dd>
+        ${p.note ? `<dt>Notatka</dt><dd>${esc(p.note)}</dd>` : ''}
+      </dl></div>
+    </section>
+
+    <section class="section">
+      <h2>Jak dbać — ${esc(care.label)}</h2>
+      <div class="card care">
+        <p><b>Światło:</b> ${esc(care.light)}</p>
+        <p><b>Wilgotność:</b> ${esc(care.humidity)}</p>
+        <p><b>Temperatura:</b> ${esc(care.temp)}</p>
+        <p><b>Gdzie postawić:</b> ${esc(care.placement)}</p>
+        <p><b>Podlewanie:</b> ${esc(care.note)}</p>
+      </div>
+    </section>
+
+    <section class="section" id="pv-profile">
+      <h2>Profil gatunku</h2>
+      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.</p>
+        <button type="button" class="btn btn-soft" id="pv-gen-profile" ${state.ai ? '' : 'disabled'}>Opisz gatunek</button></div>`}
+    </section>
+
+    <section class="section">
+      <h2>Analizy</h2>
+      ${checks.length ? `<ul class="check-list">${checks.map((c) => renderCheck(c, answered.has(c.id))).join('')}</ul>`
+        : '<p class="muted">Jeszcze żadnej. „Kontrola” ocenia ogólny stan i warunki, „Doktor” szuka przyczyny konkretnego problemu.</p>'}
+    </section>
+
+    <section class="section">
+      <h2>Podlewania${waterings.length ? ` (${waterings.length})` : ''}</h2>
+      ${waterings.length ? `<div class="card"><ul class="water-list">${waterings.slice(0, 30).map((w) => `<li>${fmtDateTime(w.ts)}</li>`).join('')}</ul></div>` : '<p class="muted">Brak zapisanych podlewań.</p>'}
+    </section>`;
+
+  $('#pv-water').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const { plant } = await api('water', { json: { id: p.id } });
+      toast(`Podlano: ${plant.name}`);
+      const i = state.plants.findIndex((x) => x.id === p.id);
+      if (i >= 0) state.plants[i] = plant;
+      showPlant(p.id);
+    } catch (err) { toast(err.message, 'error'); e.target.disabled = false; }
+  });
+  $('#pv-edit').addEventListener('click', () => openEdit(p.id));
+  $('#pv-checkup').addEventListener('click', () => openCheck(p, 'checkup'));
+  $('#pv-doctor').addEventListener('click', () => openCheck(p, 'doctor'));
+  $('#pv-gen-profile')?.addEventListener('click', (e) => generateProfile(p.id, e.target));
+  $('#pv-refresh-profile')?.addEventListener('click', (e) => generateProfile(p.id, e.target, true));
+
+  for (const head of el.plantView.querySelectorAll('.check-head')) {
+    head.addEventListener('click', () => {
+      const body = head.nextElementSibling;
+      body.hidden = !body.hidden;
+      head.setAttribute('aria-expanded', String(!body.hidden));
+    });
+  }
+  for (const form of el.plantView.querySelectorAll('.answer-form')) {
+    form.addEventListener('submit', (e) => submitFollowUp(e, p.id));
+  }
+  window.scrollTo(0, 0);
+}
+
+function renderProfile(pr) {
+  const row = (k, v) => (v ? `<p><b>${k}:</b> ${esc(v)}</p>` : '');
+  return `<div class="card care">
+    ${row('Pochodzenie', pr.origin)}${row('Światło', pr.light)}${row('Podlewanie', pr.watering)}${row('Wilgotność', pr.humidity)}
+    ${row('Temperatura', pr.temperature)}${row('Podłoże i doniczka', pr.soil_and_pot)}${row('Nawożenie', pr.fertilizing)}
+    ${row('Przesadzanie', pr.repotting)}${row('Zwierzęta', pr.pets)}${row('Gdzie postawić', pr.placement)}
+    ${pr.common_problems?.length ? `<p><b>Typowe problemy:</b></p><ul>${pr.common_problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <div class="inline-actions"><button type="button" class="btn btn-ghost" id="pv-refresh-profile" ${state.ai ? '' : 'disabled'}>Napisz od nowa</button></div>
+  </div>`;
+}
+
+async function generateProfile(id, btn, refresh = false) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Piszę opis…';
+  try {
+    await api('profile', { json: { id, refresh } });
+    toast('Opis gotowy.');
+    showPlant(id);
+  } catch (err) {
+    toast(err.message, 'error', 6000);
+    btn.disabled = false;
+    btn.textContent = refresh ? 'Napisz od nowa' : 'Opisz gatunek';
+  }
+}
+
+function renderResult(r) {
+  return `
+    <span class="verdict ${esc(r.status)}">${STATUS_LABEL[r.status] ?? esc(r.status)}</span>
+    <p style="margin:4px 0 8px">${esc(r.summary)}</p>
+    ${r.findings?.length ? `<ul class="findings">${r.findings.map((f) => `<li><b>${esc(f.observation)}</b> → ${esc(f.likely_cause)} <span class="conf">(${CONF_LABEL[f.confidence] ?? esc(f.confidence)})</span></li>`).join('')}</ul>` : ''}
+    ${r.actions?.length ? `<p style="margin:8px 0 0"><b>Co zrobić:</b></p><ol class="actions-list">${r.actions.map((a) => `<li>${esc(a)}</li>`).join('')}</ol>` : ''}
+    ${r.watering ? `<p style="margin:8px 0 0"><b>Podlewanie:</b> ${esc(r.watering)}</p>` : ''}`;
+}
+
+function renderCheck(c, answered) {
+  const r = c.result ?? {};
+  return `<li class="check">
+    <button type="button" class="check-head" aria-expanded="false">
+      <span class="dot ${esc(r.status)}"></span>
+      <span class="title">${esc(r.title || STATUS_LABEL[r.status] || 'Analiza')}<br><span class="mode">${MODE_LABEL[c.mode] ?? esc(c.mode)}${c.parent_id ? ' · dopytanie' : ''}</span></span>
+      <span class="when">${fmtDateTime(c.ts)}</span>
+    </button>
+    <div class="check-body" hidden>
+      ${c.photo ? `<img class="photo" src="${esc(c.photo)}?t=${encodeURIComponent(state.token)}" alt="" loading="lazy">` : ''}
+      ${c.user_text ? `<p class="user-text">„${esc(c.user_text)}”</p>` : ''}
+      ${renderResult(r)}
+      ${r.questions?.length ? `<div class="questions">
+        <b>${answered ? 'Pytania (odpowiedziano)' : 'Doktor pyta:'}</b>
+        <ol>${r.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>
+        ${answered ? '' : `<form class="answer-form" data-parent="${c.id}">
+          <textarea name="text" placeholder="Odpowiedz po kolei…" required></textarea>
+          <button type="submit" class="btn btn-primary">Odpowiedz i zaktualizuj diagnozę</button>
+        </form>`}
+      </div>` : ''}
+      <p class="usage">${esc(c.model || '')}${c.input_tokens != null ? ` · ${c.input_tokens}+${c.output_tokens ?? 0} tokenów` : ''}${approxCost(c)}</p>
+    </div>
+  </li>`;
+}
+
+async function submitFollowUp(e, plantId) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Analizuję…';
+  try {
+    const fd = new FormData();
+    fd.append('id', plantId);
+    fd.append('parent_id', form.dataset.parent);
+    fd.append('text', form.text.value.trim());
+    await api('health', { form: fd });
+    toast('Diagnoza zaktualizowana.');
+    showPlant(plantId);
+  } catch (err) {
+    toast(err.message, 'error', 6000);
+    btn.disabled = false;
+    btn.textContent = 'Odpowiedz i zaktualizuj diagnozę';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// check-up / doctor sheet
+// ---------------------------------------------------------------------------
+function openCheck(p, mode) {
+  const isDoctor = mode === 'doctor';
+  openSheet(isDoctor ? `Doktor: ${p.name}` : `Kontrola: ${p.name}`);
+  el.sheetBody.innerHTML = `
+    <p class="muted" style="margin:0 0 12px">${isDoctor
+      ? 'Zrób wyraźne zdjęcie problematycznego miejsca (liść z bliska, łodyga, podłoże) i opisz, co Cię niepokoi. Jeśli do diagnozy zabraknie informacji, Doktor zada pytania.'
+      : 'Zrób zdjęcie całej rośliny w naturalnym świetle. Ocena obejmie stan liści, dopasowanie światła, doniczki i podlewania.'}</p>
+    <form id="check-form" class="identify">
+      <div class="photo-pick">
+        <button type="button" class="btn btn-primary" tabindex="-1">Zrób zdjęcie / wybierz z galerii</button>
+        <input type="file" accept="image/*" id="check-photo" aria-label="Zdjęcie" required>
+      </div>
+      <img class="photo-preview" id="check-preview" alt="Podgląd" hidden>
+      <div class="field">
+        <label for="check-text">${isDoctor ? 'Co jest nie tak?' : 'Uwagi (opcjonalnie)'}</label>
+        <textarea id="check-text" name="text" maxlength="1000" ${isDoctor ? 'required' : ''} placeholder="${isDoctor ? 'np. od tygodnia żółkną dolne liście, na spodzie białe kropki' : 'np. przesadzona 2 tygodnie temu'}"></textarea>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block" id="check-submit" disabled>${isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan'}</button>
+      <p class="muted" style="margin:6px 0 0">Analiza trwa 15–60 s i kosztuje kilka–kilkanaście groszy (Claude, płatność za użycie).</p>
+    </form>`;
+
+  let upload = null;
+  $('#check-photo').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const out = await processImage(file);
+      upload = out.upload;
+      const prev = $('#check-preview');
+      prev.src = out.thumb;
+      prev.hidden = false;
+      $('#check-submit').disabled = false;
+    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+  });
+
+  $('#check-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!upload) return;
+    const btn = $('#check-submit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Analizuję… to może potrwać do minuty';
+    try {
+      const fd = new FormData();
+      fd.append('id', p.id);
+      fd.append('mode', mode);
+      fd.append('text', $('#check-text').value.trim());
+      fd.append('image', upload, 'photo.jpg');
+      const { check } = await api('health', { form: fd });
+      el.sheetTitle.textContent = check.result?.title || 'Wynik';
+      el.sheetBody.innerHTML = `${renderResult(check.result)}
+        ${check.result?.questions?.length ? `<div class="questions"><b>Doktor pyta:</b><ol>${check.result.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol><p class="muted" style="margin:0">Odpowiesz w historii analiz na profilu rośliny.</p></div>` : ''}
+        <p class="usage">${approxCost(check).replace(' · ', '') || ''}</p>
+        <button type="button" class="btn btn-primary btn-block" id="check-close">Zamknij</button>`;
+      $('#check-close').addEventListener('click', () => { closeSheet(); showPlant(p.id); });
+    } catch (err) {
+      toast(err.message, 'error', 7000);
+      btn.disabled = false;
+      btn.textContent = isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan';
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
 if ('serviceWorker' in navigator) {
@@ -643,5 +945,7 @@ if ('serviceWorker' in navigator) {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.token && !el.app.hidden) refresh();
 });
+
+window.addEventListener('hashchange', route);
 
 if (state.token) enterApp(); else showLogin();

@@ -8,12 +8,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
-  ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile,
-  listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant,
-  upsertSub, deleteSub, storePhoto, removePhoto, tokenFor, safeEqual,
-  parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
+  ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
+  listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
+  insertCheck, getCheck, listChecks, checkChain,
+  upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto,
+  tokenFor, safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
 } from './lib.js';
 import { runCron } from './cron.js';
+import { createClient as createAiClient, analyzeHealth, describeSpecies } from './ai.js';
 
 // NOTE: no top-level await anywhere in this module graph. Plesk/Passenger loads the
 // startup file with require(), and Node refuses require() on an ESM graph that
@@ -21,6 +23,7 @@ import { runCron } from './cron.js';
 let config;
 let db;
 let TOKEN;
+let ai = null; // Anthropic client, null when anthropicApiKey is not configured
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JSON_LIMIT = 2 * 1024 * 1024;
@@ -148,7 +151,83 @@ const actions = {
 
   async plants(req, res, url) {
     requireAuth(req, url);
-    sendJson(res, 200, { plants: listPlants(db), today: toDateString() });
+    sendJson(res, 200, { plants: listPlants(db), today: toDateString(), ai: !!ai });
+  },
+
+  // Everything the profile view needs: plant, group care info, watering history, health checks.
+  async plant(req, res, url, rest) {
+    requireAuth(req, url);
+    const id = Number(rest);
+    const plant = listPlants(db).find((p) => p.id === id);
+    if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    sendJson(res, 200, {
+      plant,
+      care: groupCare(plant.group_key),
+      waterings: listWaterings(db, id),
+      checks: listChecks(db, id),
+      ai: !!ai,
+    });
+  },
+
+  // Claude analysis. Multipart: id, mode (checkup|doctor), text, image (new check) or parent_id + text (follow-up).
+  async health(req, res, url) {
+    requireAuth(req, url);
+    if (!ai) throw new HttpError(503, 'Brak klucza Anthropic w config.js — analiza niedostępna.');
+    const fd = await readMultipart(req);
+    const id = Number(fd.get('id'));
+    if (!getPlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    const plant = listPlants(db).find((p) => p.id === id);
+    let mode = String(fd.get('mode') ?? 'checkup');
+    if (!['checkup', 'doctor'].includes(mode)) throw new HttpError(400, 'Nieznany tryb analizy.');
+    const text = str(fd.get('text'), 1000);
+    const parentId = fd.get('parent_id') ? Number(fd.get('parent_id')) : null;
+
+    let chain = [];
+    let image;
+    let buf = null;
+    let mediaType = null;
+    if (parentId) {
+      const parent = getCheck(db, parentId);
+      if (!parent || parent.plant_id !== id) throw new HttpError(404, 'Nie ma takiej analizy.');
+      if (!text) throw new HttpError(400, 'Wpisz odpowiedzi na pytania.');
+      chain = checkChain(db, parentId);
+      mode = chain[0].mode;
+      image = chain[0].photo ? readPhotoBase64(chain[0].photo) : null;
+      if (!image) throw new HttpError(410, 'Zdjęcie z pierwotnej analizy już nie istnieje — zrób nową analizę.');
+    } else {
+      const file = fd.get('image');
+      if (!(file instanceof Blob) || !file.size) throw new HttpError(400, 'Dodaj zdjęcie rośliny.');
+      buf = Buffer.from(await file.arrayBuffer());
+      if (buf.length > 5 * 1024 * 1024) throw new HttpError(413, 'Zdjęcie jest za duże (limit 5 MB).');
+      mediaType = sniffImageType(buf);
+      if (!mediaType) throw new HttpError(400, 'Plik nie jest poprawnym obrazem (JPEG, PNG lub WebP).');
+      if (mode === 'doctor' && !text) throw new HttpError(400, 'Opisz krótko, co Cię niepokoi.');
+      image = { data: buf.toString('base64'), mediaType };
+    }
+
+    const { result, usage, model } = await analyzeHealth(ai, config, {
+      plant, care: groupCare(plant.group_key), mode, userText: text, image, chain,
+    });
+    const photo = buf ? storePhotoBuffer(buf, mediaType, id) : null;
+    const checkId = insertCheck(db, {
+      plant_id: id, parent_id: parentId, mode, photo, user_text: text, result, model,
+      input_tokens: usage?.input_tokens ?? null, output_tokens: usage?.output_tokens ?? null,
+    });
+    sendJson(res, 200, { check: getCheck(db, checkId) });
+  },
+
+  // Species care profile written by Claude, cached on the plant row. {id, refresh?}
+  async profile(req, res, url) {
+    requireAuth(req, url);
+    if (!ai) throw new HttpError(503, 'Brak klucza Anthropic w config.js — opis niedostępny.');
+    const b = await readJson(req);
+    const id = Number(b.id);
+    const plant = listPlants(db).find((p) => p.id === id);
+    if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true });
+    const { result } = await describeSpecies(ai, config, { plant, care: groupCare(plant.group_key) });
+    setProfile(db, id, JSON.stringify(result));
+    sendJson(res, 200, { profile: result, cached: false });
   },
 
   async identify(req, res, url) {
@@ -350,21 +429,39 @@ const server = http.createServer(async (req, res) => {
   const action = actions[m[1]];
   try {
     if (!action) throw new HttpError(404, 'Nieznana akcja.');
-    const isGet = ['plants', 'vapid', 'photo', 'cron'].includes(m[1]);
+    const isGet = ['plants', 'plant', 'vapid', 'photo', 'cron'].includes(m[1]);
     if (isGet ? req.method !== 'GET' : req.method !== 'POST') throw new HttpError(405, 'Niedozwolona metoda.');
     await action(req, res, url, m[2]);
   } catch (e) {
-    const status = e instanceof HttpError ? e.status : 500;
+    const status = Number.isInteger(e?.status) && e.status >= 400 && e.status < 600 ? e.status : 500;
     if (status === 500) console.error(e);
     sendJson(res, status, { error: status === 500 ? 'Błąd serwera.' : e.message });
   }
 });
+
+/** Dev-only stand-in for the Anthropic client (GREENLY_FAKE_AI=1): returns canned JSON matching the schemas. */
+function fakeAiClient() {
+  return {
+    beta: { messages: { create: async (params) => {
+      await sleep(800);
+      const isProfile = 'pets' in (params.output_config?.format?.schema?.properties ?? {});
+      const turn = params.messages.length;
+      const body = isProfile
+        ? { origin: 'Lasy tropikalne Ameryki Środkowej.', light: 'Jasne, rozproszone; parapet wschodni.', watering: 'Gdy 3–4 cm podłoża przeschnie.', humidity: '50–70%.', temperature: '18–27 °C.', soil_and_pot: 'Przepuszczalne podłoże z korą, doniczka z otworami.', fertilizing: 'Co 2–3 tygodnie od marca do września.', repotting: 'Co 2 lata, wiosną.', pets: 'Trująca dla kotów i psów (szczawiany wapnia).', common_problems: ['żółte dolne liście → przelanie', 'brązowe końcówki → suche powietrze'], placement: '1–2 m od okna wschodniego.' }
+        : { status: turn > 1 ? 'sick' : 'watch', title: turn > 1 ? 'Przelanie — potwierdzone' : 'Prawdopodobne przelanie', summary: 'Dolne liście żółkną równomiernie, podłoże wygląda na mokre.', findings: [{ observation: 'Żółknięcie dolnych liści', likely_cause: 'nadmiar wody w osłonce bez odpływu', confidence: 'medium' }], actions: ['Wylej wodę z osłonki.', 'Nie podlewaj, aż 3 cm podłoża przeschnie.'], watering: 'Wydłuż interwał o 3–4 dni.', questions: turn > 1 ? [] : ['Czy podłoże 3 cm pod powierzchnią jest mokre?', 'Czy w osłonce stoi woda?'] };
+      return { stop_reason: 'end_turn', model: 'claude-opus-5', usage: { input_tokens: 2100, output_tokens: 900 }, content: [{ type: 'text', text: JSON.stringify(body) }] };
+    } } },
+  };
+}
 
 async function main() {
   config = await loadConfig();
   loadCare();
   db = openDb();
   TOKEN = tokenFor(config.password);
+  ai = createAiClient(config);
+  if (process.env.GREENLY_FAKE_AI) ai = fakeAiClient(); // dev only: canned answers, no network
+  if (!ai) console.log('greenLy: anthropicApiKey not set — health checks and species profiles disabled');
   const port = Number(process.env.PORT) || config.port || 8080;
   server.listen(port, () => console.log(`greenLy listening on ${port}`));
 }

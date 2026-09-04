@@ -71,6 +71,9 @@ Fill in:
 | `password` | the single app password (login screen). Long and random. |
 | `plantnetApiKey` | Pl@ntNet key — see step 4. Leave empty to disable photo identification (manual name entry still works). |
 | `plantnetLang` | `pl` for Polish common names (falls back to `en` automatically). |
+| `anthropicApiKey` | Anthropic API key — step 4b. Leave empty to hide check-ups, doctor and species profiles. |
+| `anthropicModel` | `claude-opus-5` (default) or `claude-sonnet-5` (cheaper). |
+| `anthropicEffort` | `low` / `medium` (default) / `high` — thoroughness vs. cost per analysis. |
 | `vapid.subject` | `mailto:your@email` |
 | `vapid.publicKey` / `vapid.privateKey` | from step 5 |
 | `cronSecret` | long random string; only needed for the HTTP cron fallback |
@@ -84,6 +87,13 @@ Restart the app after editing `config.js` (it is read once at start).
 1. Create an account at <https://my.plantnet.org>.
 2. *Settings → API key* (an app is created automatically; the key is shown there).
 3. Free tier: **500 identification requests per day**. greenLy makes one request per photo.
+
+### 4b. Anthropic API key (optional)
+
+1. <https://console.anthropic.com> → *API keys* → create a key, paste it as `anthropicApiKey`.
+2. Billing is pay-per-use from prepaid credits — no subscription. A check-up or diagnosis costs a few cents;
+   the app shows the approximate cost under each analysis (from the stored token counts).
+3. Restart the app after editing `config.js`.
 
 ## 5. VAPID keys for web push
 
