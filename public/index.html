@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>greenLy</title>
+  <meta name="description" content="Podlewanie roślin doniczkowych — plan dobrany do gatunku i warunków.">
+  <meta name="theme-color" content="#1c3326">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="greenLy">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="./" aria-label="greenLy — strona główna">green<b>L</b>y</a>
+  <div class="topbar-actions" id="topbar-actions" hidden>
+    <button type="button" class="btn btn-ghost" id="btn-push" aria-pressed="false">Powiadomienia</button>
+    <button type="button" class="btn btn-ghost" id="btn-logout">Wyloguj</button>
+  </div>
+</header>
+
+<main id="view-login" class="view" hidden>
+  <form class="login" id="login-form" autocomplete="off">
+    <h1>Zaloguj się</h1>
+    <label for="login-password">Hasło</label>
+    <input id="login-password" type="password" name="password" autocomplete="current-password" required>
+    <button type="submit" class="btn btn-primary">Wejdź</button>
+  </form>
+</main>
+
+<main id="view-app" class="view" hidden>
+  <p class="ios-hint" id="ios-hint" hidden>
+    Na iPhonie powiadomienia działają dopiero po dodaniu greenLy do ekranu początkowego
+    (Udostępnij → „Do ekranu początkowego”). Zgodę na powiadomienia kliknij w wersji uruchomionej z ikony.
+  </p>
+  <ul class="plants" id="plants" aria-live="polite"></ul>
+  <p class="empty" id="empty" hidden>Nie masz jeszcze roślin. Dodaj pierwszą ze zdjęcia.</p>
+  <div class="fab-wrap">
+    <button type="button" class="btn btn-primary fab" id="btn-add">+ Dodaj roślinę</button>
+  </div>
+</main>
+
+<div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+  <div class="sheet-handle" aria-hidden="true"></div>
+  <div class="sheet-head">
+    <h2 id="sheet-title">Nowa roślina</h2>
+    <button type="button" class="btn btn-ghost" id="sheet-close" aria-label="Zamknij">✕</button>
+  </div>
+  <div class="sheet-body" id="sheet-body"></div>
+</section>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+
+<template id="tpl-plant">
+  <li class="plant">
+    <button type="button" class="plant-main">
+      <span class="thumb"><img alt="" loading="lazy"></span>
+      <span class="plant-text">
+        <span class="plant-name"></span>
+        <span class="plant-species"></span>
+        <span class="bar" role="img"><span class="bar-fill"></span></span>
+        <span class="plant-meta"></span>
+      </span>
+    </button>
+    <button type="button" class="btn btn-water">Podlej</button>
+  </li>
+</template>
+
+<script src="./app.js" type="module"></script>
+</body>
+</html>

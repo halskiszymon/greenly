@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- greenLy icon: water drop + leaf on dark leafy ink -->
+  <rect width="512" height="512" fill="#1c3326"/>
+  <g transform="translate(0,8)">
+    <!-- drop -->
+    <path d="M232 78 C232 78 108 218 108 306 a124 124 0 0 0 248 0 C356 218 232 78 232 78 Z" fill="#2a9fae"/>
+    <path d="M168 300 a64 64 0 0 0 40 74" fill="none" stroke="#d7ecef" stroke-width="16" stroke-linecap="round" opacity=".85"/>
+    <!-- leaf -->
+    <path d="M286 372 C286 268 356 206 452 200 C452 300 400 372 300 380 Z" fill="#8fd39f"/>
+    <path d="M300 372 C332 320 380 270 440 214" fill="none" stroke="#1c3326" stroke-width="12" stroke-linecap="round"/>
+  </g>
+</svg>

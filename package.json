@@ -1,0 +1,21 @@
+{
+  "name": "greenly",
+  "version": "1.0.0",
+  "description": "Self-hosted PWA for watering houseplants: Pl@ntNet identification, per-species watering plans, web push reminders.",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "cron": "node cron.js",
+    "genkeys": "node genkeys.js",
+    "icons": "sh scripts/make-icons.sh",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}
