@@ -10,6 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
   listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
+  ensureWateringRow, deleteWatering,
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto,
   tokenFor, safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
@@ -324,6 +325,7 @@ const actions = {
     }
 
     updatePlant(db, plantId, plant);
+    if (plant.last_watered && plant.last_watered !== existing?.last_watered) ensureWateringRow(db, plantId, plant.last_watered);
     const saved = listPlants(db).find((p) => p.id === plantId);
     sendJson(res, 200, { plant: saved });
   },
@@ -335,8 +337,17 @@ const actions = {
     if (!getPlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
     const date = b.date ? String(b.date) : toDateString();
     if (!parseDateString(date)) throw new HttpError(400, 'Nieprawidłowa data.');
-    waterPlant(db, id, date);
-    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === id) });
+    const watering_id = waterPlant(db, id, date);
+    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === id), watering_id });
+  },
+
+  // Removes one watering (undo, or a wrong entry in the history) and recomputes last_watered.
+  async unwater(req, res, url) {
+    requireAuth(req, url);
+    const b = await readJson(req);
+    const plantId = deleteWatering(db, Number(b.watering_id));
+    if (!plantId) throw new HttpError(404, 'Nie ma takiego podlania.');
+    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === plantId) });
   },
 
   async delete(req, res, url) {

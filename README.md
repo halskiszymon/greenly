@@ -91,7 +91,8 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 | POST | `identify` | multipart, field `image` (jpeg/png/webp, ≤ 8 MB) → top 5 `{score, species, genus, family, common[], profile}`; 404 = not recognized, 429 = daily quota, 503 = no key configured |
 | POST | `lookup` | `{species}` → `{species, profile}` for a manually typed name |
 | POST | `save` | create (`id` null) or update; optional `photo` as data URL (jpeg/png/webp, ≤ 600 KB, magic bytes checked) stored in `data/photos/`; `photo: null` removes it |
-| POST | `water` | `{id, date?}` → sets `last_watered`, appends to `waterings`, clears `last_notified` |
+| POST | `water` | `{id, date?}` → sets `last_watered`, appends to `waterings`, clears `last_notified`; returns `{plant, watering_id}` (the UI offers a 5 s undo) |
+| POST | `unwater` | `{watering_id}` → deletes that history row and recomputes `last_watered` from the remaining ones (undo, or removing a wrong entry) |
 | POST | `delete` | `{id}` → removes plant, its history and photo |
 | GET | `vapid` | `{publicKey}` |
 | POST | `subscribe` / `unsubscribe` | PushSubscription JSON / `{endpoint}` |
@@ -105,7 +106,7 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 
 - `plants` — id, name, species, common, genus, family, group_key, base_summer, base_winter, pot_cm,
   pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
-- `waterings` — id, plant_id, ts
+- `waterings` — id, plant_id, ts. Every `last_watered` has a matching row: `save` adds one for a manually entered date, and `openDb()` backfills legacy plants without history.
 - `subs` — endpoint (PK), p256dh, auth, created_at
 - `health_checks` — id, plant_id, parent_id (follow-up chain), mode, ts, photo, photos (JSON array), user_text, result (JSON), model, input_tokens, output_tokens
 - `plants.profile` — cached species profile JSON (added via `ensureColumn()` on start for databases created before it existed)

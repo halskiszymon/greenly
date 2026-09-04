@@ -75,8 +75,14 @@ img { display: block; max-width: 100%; }
 .btn-ghost[aria-pressed="true"] { color: var(--water-ink); background: var(--water-soft); }
 .btn-danger { color: var(--alarm); background: transparent; border-color: var(--alarm-soft); }
 .btn-danger:hover { background: var(--alarm-soft); }
-.btn-water { background: var(--water-soft); color: var(--water-ink); font-weight: 600; align-self: center; flex-shrink: 0; }
+.btn-water { background: var(--water-soft); color: var(--water-ink); font-weight: 600; align-self: center; flex-shrink: 0; position: relative; overflow: hidden; min-width: 84px; }
 .btn-water:hover { background: var(--water); color: #fff; }
+/* 5-second undo window after watering: the fill drains from right to left */
+.btn-water.undo { background: var(--alarm-soft); color: var(--alarm); }
+.btn-water.undo:hover { background: var(--alarm-soft); color: var(--alarm); }
+.undo-fill { position: absolute; inset: 0; background: rgba(196, 73, 30, .18); transform-origin: left center; animation: undo-drain linear forwards; pointer-events: none; }
+.undo-label { position: relative; }
+@keyframes undo-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 .btn-block { width: 100%; }
 
 /* views */
@@ -312,8 +318,14 @@ img { display: block; max-width: 100%; }
 .user-text { font-style: italic; color: var(--muted); font-size: 14px; margin: 6px 0; }
 .usage { font-size: 12px; color: var(--muted); margin-top: 8px; }
 
-.water-list { margin: 0; padding: 0; list-style: none; columns: 2; font-size: 14px; }
-.water-list li { break-inside: avoid; padding: 3px 0; }
+.water-list { margin: 0; padding: 0; list-style: none; columns: 2; column-gap: 16px; font-size: 14px; }
+.water-list li { break-inside: avoid; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 1px 0; }
+.btn-x {
+  width: 30px; height: 30px; border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+  font-size: 18px; line-height: 1; cursor: pointer; display: grid; place-items: center; flex-shrink: 0;
+  transition: background-color .18s ease, color .18s ease;
+}
+.btn-x:hover { background: var(--alarm-soft); color: var(--alarm); }
 
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--water-soft); border-top-color: var(--water); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 8px; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -335,6 +347,6 @@ img { display: block; max-width: 100%; }
 .think-time { margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .think-time.over { color: var(--warn); }
 @media (prefers-reduced-motion: reduce) {
-  .think-leaf, .dots i { animation: none; }
+  .think-leaf, .dots i, .undo-fill { animation: none; }
   .think-bar span, .think-text { transition: none; }
 }

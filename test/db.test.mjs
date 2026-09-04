@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openDb, loadCare, insertPlant, insertCheck, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn } from '../lib.js';
+import { openDb, loadCare, insertPlant, insertCheck, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings } from '../lib.js';
 
 loadCare();
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'greenly-db-')), 'test.sqlite');
@@ -47,4 +47,29 @@ test('health checks: insert, chain, list, profile cache, cascade delete', () => 
   assert.equal(listPlants(db)[0].profile.origin, 'Meksyk');
   assert.equal(deletePlant(db, id), true);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM health_checks').get().n, 0);
+});
+
+test('watering undo: delete the latest row and last_watered falls back to the previous one', () => {
+  const db = openDb(tmp());
+  const id = insertPlant(db, { ...basePlant, last_watered: '2026-08-20' });
+  ensureWateringRow(db, id, '2026-08-20');
+  ensureWateringRow(db, id, '2026-08-20'); // idempotent per day
+  assert.equal(listWaterings(db, id).length, 1);
+  const w = waterPlant(db, id, '2026-09-04');
+  assert.equal(listPlants(db)[0].last_watered, '2026-09-04');
+  assert.equal(deleteWatering(db, w), id);
+  assert.equal(listPlants(db)[0].last_watered, '2026-08-20');
+  const [only] = listWaterings(db, id);
+  deleteWatering(db, only.id);
+  assert.equal(listPlants(db)[0].last_watered, null);
+  assert.equal(deleteWatering(db, 9999), null);
+});
+
+test('backfill creates a history row for legacy plants with a date but no rows', () => {
+  const db = openDb(tmp());
+  const id = insertPlant(db, { ...basePlant, last_watered: '2026-08-01' });
+  assert.equal(listWaterings(db, id).length, 0);
+  assert.equal(backfillWaterings(db), 1);
+  assert.equal(listWaterings(db, id).length, 1);
+  assert.equal(backfillWaterings(db), 0);
 });

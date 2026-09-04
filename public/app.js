@@ -259,17 +259,62 @@ function renderList() {
   el.empty.hidden = state.plants.length > 0;
 }
 
-async function water(id, li) {
-  const btn = li.querySelector('.btn-water');
+// ---------------------------------------------------------------------------
+// watering with a 5-second undo window
+// The watering is saved immediately; the button turns into "Cofnij · 5…1" with a
+// draining fill. Tapping it deletes that history row and restores the previous state.
+// ---------------------------------------------------------------------------
+const UNDO_MS = 5000;
+
+function stopUndo(btn) {
+  if (btn._undo) { clearInterval(btn._undo.iv); clearTimeout(btn._undo.to); }
+  btn._undo = null;
+  delete btn.dataset.wateringId;
+  btn.classList.remove('undo');
+  btn.textContent = 'Podlej';
+}
+
+function startUndo(btn, wateringId, onExpire) {
+  btn.dataset.wateringId = String(wateringId);
+  btn.classList.add('undo');
+  let left = UNDO_MS / 1000;
+  btn.innerHTML = `<span class="undo-fill" style="animation-duration:${UNDO_MS}ms"></span><span class="undo-label">Cofnij · ${left}</span>`;
+  const iv = setInterval(() => {
+    left = Math.max(1, left - 1);
+    const l = btn.querySelector('.undo-label');
+    if (l) l.textContent = `Cofnij · ${left}`;
+  }, 1000);
+  const to = setTimeout(() => { stopUndo(btn); onExpire(); }, UNDO_MS);
+  btn._undo = { iv, to };
+}
+
+/**
+ * @param {object} h
+ * @param {(plant:object)=>void} h.onWatered   immediate UI update after the watering is saved
+ * @param {(plant:object|null, undone:boolean)=>void} h.onSettled   undo window ended (undone or expired)
+ */
+async function waterWithUndo(plantId, btn, h) {
+  if (btn.dataset.wateringId) {
+    const wateringId = Number(btn.dataset.wateringId);
+    stopUndo(btn);
+    btn.disabled = true;
+    try {
+      const { plant } = await api('unwater', { json: { watering_id: wateringId } });
+      toast('Cofnięto podlanie.');
+      h.onSettled(plant, true);
+    } catch (err) {
+      toast(err.message, 'error');
+      h.onSettled(null, true);
+    } finally {
+      btn.disabled = false;
+    }
+    return;
+  }
   btn.disabled = true;
   try {
-    const { plant } = await api('water', { json: { id } });
-    const i = state.plants.findIndex((p) => p.id === id);
-    if (i >= 0) state.plants[i] = plant;
-    // Animate the bar in place first, then re-sort the list after the transition.
-    renderListInPlace(plant, li);
-    setTimeout(() => { state.plants.sort(sortPlants); renderList(); }, 650);
-    toast(`Podlano: ${plant.name}`);
+    const { plant, watering_id } = await api('water', { json: { id: plantId } });
+    h.onWatered(plant);
+    startUndo(btn, watering_id, () => h.onSettled(plant, false));
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -277,12 +322,30 @@ async function water(id, li) {
   }
 }
 
+async function water(id, li) {
+  const btn = li.querySelector('.btn-water');
+  const put = (plant) => { const i = state.plants.findIndex((p) => p.id === id); if (i >= 0) state.plants[i] = plant; };
+  await waterWithUndo(id, btn, {
+    onWatered(plant) {
+      put(plant);
+      renderListInPlace(plant, li); // animate the bar in place; re-sort once the undo window closes
+      toast(`Podlano: ${plant.name}`);
+    },
+    onSettled(plant, undone) {
+      if (plant) { put(plant); if (undone) renderListInPlace(plant, li); }
+      state.plants.sort(sortPlants);
+      renderList();
+    },
+  });
+}
+
 function sortPlants(a, b) {
   return (a.days_left ?? -9999) - (b.days_left ?? -9999) || a.name.localeCompare(b.name, 'pl');
 }
 
 function renderListInPlace(p, li) {
-  li.classList.remove('is-overdue', 'is-today');
+  li.classList.toggle('is-overdue', p.days_left !== null && p.days_left < 0);
+  li.classList.toggle('is-today', p.days_left === 0);
   const fill = li.querySelector('.bar-fill');
   const pct = fillPercent(p);
   fill.classList.toggle('low', pct < 20);
@@ -775,19 +838,26 @@ function renderPlant({ plant: p, care, waterings, checks }) {
 
     <section class="section">
       <h2>Podlewania${waterings.length ? ` (${waterings.length})` : ''}</h2>
-      ${waterings.length ? `<div class="card"><ul class="water-list">${waterings.slice(0, 30).map((w) => `<li>${fmtDateTime(w.ts)}</li>`).join('')}</ul></div>` : '<p class="muted">Brak zapisanych podlewań.</p>'}
+      ${waterings.length ? `<div class="card"><ul class="water-list">${waterings.slice(0, 30).map((w) => `<li><span>${fmtDateTime(w.ts)}</span><button type="button" class="btn-x" data-w="${w.id}" aria-label="Usuń podlanie z ${fmtDateTime(w.ts)}">×</button></li>`).join('')}</ul></div>` : '<p class="muted">Brak zapisanych podlewań.</p>'}
     </section>`;
 
-  $('#pv-water').addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    try {
-      const { plant } = await api('water', { json: { id: p.id } });
-      toast(`Podlano: ${plant.name}`);
-      const i = state.plants.findIndex((x) => x.id === p.id);
-      if (i >= 0) state.plants[i] = plant;
-      showPlant(p.id);
-    } catch (err) { toast(err.message, 'error'); e.target.disabled = false; }
-  });
+  const put = (plant) => { const i = state.plants.findIndex((x) => x.id === p.id); if (i >= 0) state.plants[i] = plant; };
+  $('#pv-water').addEventListener('click', (e) => waterWithUndo(p.id, e.currentTarget, {
+    onWatered(plant) { put(plant); renderStatusInPlace(plant); toast(`Podlano: ${plant.name}`); },
+    onSettled(plant) { if (plant) put(plant); showPlant(p.id); },
+  }));
+  for (const x of el.plantView.querySelectorAll('.btn-x[data-w]')) {
+    x.addEventListener('click', async () => {
+      const w = waterings.find((r) => r.id === Number(x.dataset.w));
+      if (!w || !confirm(`Usunąć podlanie z ${fmtDateTime(w.ts)}?`)) return;
+      try {
+        const { plant } = await api('unwater', { json: { watering_id: w.id } });
+        put(plant);
+        toast('Usunięto podlanie.');
+        showPlant(p.id);
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  }
   $('#pv-edit').addEventListener('click', () => openEdit(p.id));
   $('#pv-checkup').addEventListener('click', () => openCheck(p, 'checkup'));
   $('#pv-doctor').addEventListener('click', () => openCheck(p, 'doctor'));
@@ -801,6 +871,19 @@ function renderPlant({ plant: p, care, waterings, checks }) {
     });
   }
   window.scrollTo(0, 0);
+}
+
+/** Updates the status card of the open profile without re-rendering the whole view (keeps the undo button alive). */
+function renderStatusInPlace(p) {
+  const st = $('.pv-status', el.plantView);
+  if (!st) return;
+  st.classList.toggle('is-overdue', p.days_left !== null && p.days_left < 0);
+  st.classList.toggle('is-today', p.days_left === 0);
+  const pct = fillPercent(p);
+  const fill = st.querySelector('.bar-fill');
+  fill.classList.toggle('low', pct < 20);
+  fill.style.width = `${pct}%`;
+  st.querySelector('.plant-meta').textContent = metaText(p);
 }
 
 function renderProfile(pr) {

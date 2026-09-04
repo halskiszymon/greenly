@@ -209,6 +209,7 @@ export function openDb(file = DB_FILE) {
   // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not alter existing tables).
   ensureColumn(db, 'plants', 'profile', 'TEXT');
   ensureColumn(db, 'health_checks', 'photos', 'TEXT'); // JSON array of file names; `photo` keeps the first one
+  backfillWaterings(db);
   return db;
 }
 
@@ -284,9 +285,47 @@ export function updatePlant(db, id, p) {
     p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.note, p.last_watered, id);
 }
 
+/** Timestamp for a watering: now, or noon local time of the given date (so a date-only entry sorts sanely). */
+function wateringTs(date) {
+  if (!date || date === toDateString()) return new Date().toISOString();
+  const d = parseDateString(date);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12).toISOString();
+}
+
+/** Marks the plant watered, appends to the history. Returns the new watering id (for undo). */
 export function waterPlant(db, id, date = toDateString()) {
   db.prepare('UPDATE plants SET last_watered = ?, last_notified = NULL WHERE id = ?').run(date, id);
-  db.prepare('INSERT INTO waterings (plant_id, ts) VALUES (?, ?)').run(id, new Date().toISOString());
+  const r = db.prepare('INSERT INTO waterings (plant_id, ts) VALUES (?, ?)').run(id, wateringTs(date));
+  return Number(r.lastInsertRowid);
+}
+
+/** Adds a history row for a manually entered date unless one already exists for that day. */
+export function ensureWateringRow(db, id, date) {
+  if (!date) return;
+  const rows = db.prepare('SELECT ts FROM waterings WHERE plant_id = ?').all(id);
+  if (rows.some((r) => toDateString(new Date(r.ts)) === date)) return;
+  db.prepare('INSERT INTO waterings (plant_id, ts) VALUES (?, ?)').run(id, wateringTs(date));
+}
+
+/** Deletes one history row and recomputes last_watered from what is left. Returns the plant id or null. */
+export function deleteWatering(db, wateringId) {
+  const row = db.prepare('SELECT id, plant_id FROM waterings WHERE id = ?').get(wateringId);
+  if (!row) return null;
+  db.prepare('DELETE FROM waterings WHERE id = ?').run(wateringId);
+  const latest = db.prepare('SELECT ts FROM waterings WHERE plant_id = ? ORDER BY ts DESC LIMIT 1').get(row.plant_id);
+  const last = latest ? toDateString(new Date(latest.ts)) : null;
+  db.prepare('UPDATE plants SET last_watered = ? WHERE id = ?').run(last, row.plant_id);
+  return Number(row.plant_id);
+}
+
+/** One-time backfill: plants with a last_watered date but no history rows (saved before history mattered). */
+export function backfillWaterings(db) {
+  const rows = db.prepare(`
+    SELECT p.id, p.last_watered FROM plants p
+    WHERE p.last_watered IS NOT NULL AND NOT EXISTS (SELECT 1 FROM waterings w WHERE w.plant_id = p.id)
+  `).all();
+  for (const r of rows) ensureWateringRow(db, r.id, r.last_watered);
+  return rows.length;
 }
 
 export function deletePlant(db, id) {
