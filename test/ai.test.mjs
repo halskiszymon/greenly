@@ -58,6 +58,14 @@ test('follow-up chain alternates assistant JSON and user answers', () => {
   assert.equal(JSON.parse(messages[3].content).questions[0], 'Czy doniczka ma otwory?');
 });
 
+test('several photos become several image blocks before the text', () => {
+  const { messages } = buildHealthMessages({ plant, care, mode: 'checkup', userText: '', images: [image, { data: 'BBBB', mediaType: 'image/png' }] });
+  const c = messages[0].content;
+  assert.deepEqual(c.map((b) => b.type), ['image', 'image', 'text']);
+  assert.equal(c[1].source.media_type, 'image/png');
+  assert.match(c[2].text, /Zdjęć: 2/);
+});
+
 test('checkup mode leaves questions empty in the instructions and includes remarks', () => {
   const { messages } = buildHealthMessages({ plant, care, mode: 'checkup', userText: 'nowe liście', image });
   assert.match(messages[0].content[1].text, /KONTROLA/);

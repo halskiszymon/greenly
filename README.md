@@ -97,7 +97,7 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 | POST | `subscribe` / `unsubscribe` | PushSubscription JSON / `{endpoint}` |
 | GET | `photo/<file>` | stored photo, auth required |
 | GET | `plant/<id>` | profile view data: `{plant, care, waterings, checks, ai}` |
-| POST | `health` | multipart: `id`, `mode` (`checkup`\|`doctor`), `text`, `image` — or `parent_id` + `text` to answer the doctor's questions (the root photo is re-sent); → `{check}`; 503 when no Anthropic key |
+| POST | `health` | multipart: `id`, `mode` (`checkup`\|`doctor`), `text`, 1–4 `image` fields — or `parent_id` + `text` to answer the doctor's questions (the root photos are re-sent); → `{check}`; 503 when no Anthropic key |
 | POST | `profile` | `{id, refresh?}` → species care profile written by Claude, cached in `plants.profile` |
 | GET | `cron?secret=…` | runs the reminder; protected by `cronSecret`, not the login token |
 
@@ -107,7 +107,7 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
   pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
 - `waterings` — id, plant_id, ts
 - `subs` — endpoint (PK), p256dh, auth, created_at
-- `health_checks` — id, plant_id, parent_id (follow-up chain), mode, ts, photo, user_text, result (JSON), model, input_tokens, output_tokens
+- `health_checks` — id, plant_id, parent_id (follow-up chain), mode, ts, photo, photos (JSON array), user_text, result (JSON), model, input_tokens, output_tokens
 - `plants.profile` — cached species profile JSON (added via `ensureColumn()` on start for databases created before it existed)
 
 ## PWA / push

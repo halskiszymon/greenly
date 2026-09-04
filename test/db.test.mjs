@@ -35,7 +35,9 @@ test('health checks: insert, chain, list, profile cache, cascade delete', () => 
   const db = openDb(tmp());
   const id = insertPlant(db, basePlant);
   const r1 = { status: 'sick', title: 't1', summary: '', findings: [], actions: [], watering: '', questions: ['q?'] };
-  const c1 = insertCheck(db, { plant_id: id, mode: 'doctor', photo: null, user_text: 'liście', result: r1, model: 'm', input_tokens: 1, output_tokens: 2 });
+  const c1 = insertCheck(db, { plant_id: id, mode: 'doctor', photos: ['a.jpg', 'b.jpg'], user_text: 'liście', result: r1, model: 'm', input_tokens: 1, output_tokens: 2 });
+  assert.deepEqual(getCheck(db, c1).photos, ['api/photo/a.jpg', 'api/photo/b.jpg']);
+  assert.equal(getCheck(db, c1).photo, 'api/photo/a.jpg');
   const c2 = insertCheck(db, { plant_id: id, parent_id: c1, mode: 'doctor', user_text: 'tak', result: { ...r1, questions: [] } });
   assert.equal(getCheck(db, c2).parent_id, c1);
   assert.deepEqual(getCheck(db, c1).result, r1);

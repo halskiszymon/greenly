@@ -208,6 +208,7 @@ export function openDb(file = DB_FILE) {
   `);
   // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not alter existing tables).
   ensureColumn(db, 'plants', 'profile', 'TEXT');
+  ensureColumn(db, 'health_checks', 'photos', 'TEXT'); // JSON array of file names; `photo` keeps the first one
   return db;
 }
 
@@ -291,10 +292,10 @@ export function waterPlant(db, id, date = toDateString()) {
 export function deletePlant(db, id) {
   const row = getPlant(db, id);
   if (!row) return false;
-  const checkPhotos = db.prepare('SELECT photo FROM health_checks WHERE plant_id = ? AND photo IS NOT NULL').all(id);
+  const checkRows = db.prepare('SELECT photo, photos FROM health_checks WHERE plant_id = ?').all(id);
   db.prepare('DELETE FROM plants WHERE id = ?').run(id);
   if (row.photo) fs.rmSync(path.join(PHOTO_DIR, row.photo), { force: true });
-  for (const c of checkPhotos) fs.rmSync(path.join(PHOTO_DIR, c.photo), { force: true });
+  for (const c of checkRows) for (const name of checkPhotoNames(c)) fs.rmSync(path.join(PHOTO_DIR, name), { force: true });
   return true;
 }
 
@@ -310,18 +311,26 @@ export function listWaterings(db, plantId) {
 // Health checks (Claude analyses)
 // ---------------------------------------------------------------------------
 
+/** Raw stored file names of a check's photos (new `photos` JSON column, falling back to `photo`). */
+export function checkPhotoNames(row) {
+  if (row.photos) { try { const a = JSON.parse(row.photos); if (Array.isArray(a)) return a; } catch { /* fall through */ } }
+  return row.photo ? [row.photo] : [];
+}
+
 function decorateCheck(row) {
   if (!row) return null;
   let result = null;
   try { result = JSON.parse(row.result); } catch { result = null; }
-  return { ...row, photo: row.photo ? `api/photo/${row.photo}` : null, result };
+  const photos = checkPhotoNames(row).map((n) => `api/photo/${n}`);
+  return { ...row, photo: photos[0] ?? null, photos, result };
 }
 
 export function insertCheck(db, c) {
+  const photos = c.photos ?? (c.photo ? [c.photo] : []);
   const r = db.prepare(`
-    INSERT INTO health_checks (plant_id, parent_id, mode, ts, photo, user_text, result, model, input_tokens, output_tokens)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(c.plant_id, c.parent_id ?? null, c.mode, new Date().toISOString(), c.photo ?? null, c.user_text ?? '',
+    INSERT INTO health_checks (plant_id, parent_id, mode, ts, photo, photos, user_text, result, model, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(c.plant_id, c.parent_id ?? null, c.mode, new Date().toISOString(), photos[0] ?? null, JSON.stringify(photos), c.user_text ?? '',
     JSON.stringify(c.result), c.model ?? null, c.input_tokens ?? null, c.output_tokens ?? null);
   return Number(r.lastInsertRowid);
 }

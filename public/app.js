@@ -111,7 +111,7 @@ function toast(msg, type = 'info', ms = 3200) {
   t.className = `toast ${type}`;
   t.textContent = msg;
   el.toasts.appendChild(t);
-  setTimeout(() => t.remove(), ms);
+  setTimeout(() => { t.classList.add('leaving'); setTimeout(() => t.remove(), 260); }, ms);
 }
 
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -295,20 +295,37 @@ function renderListInPlace(p, li) {
 // ---------------------------------------------------------------------------
 let lastFocus = null;
 
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+let sheetTimer = null;
+
 function openSheet(title) {
+  clearTimeout(sheetTimer);
   lastFocus = document.activeElement;
   el.sheetTitle.textContent = title;
+  el.sheetBody.scrollTop = 0;
   el.backdrop.hidden = false;
   el.sheet.hidden = false;
+  // Force a layout pass so the closed state is committed, then transition to .open.
+  // (Synchronous reflow rather than requestAnimationFrame — rAF does not fire in background tabs.)
+  void el.sheet.offsetHeight;
+  el.backdrop.classList.add('open');
+  el.sheet.classList.add('open');
   document.body.style.overflow = 'hidden';
 }
 
 function closeSheet() {
-  el.sheet.hidden = true;
-  el.backdrop.hidden = true;
-  el.sheetBody.replaceChildren();
+  if (el.sheet.hidden) return;
+  el.backdrop.classList.remove('open');
+  el.sheet.classList.remove('open');
   document.body.style.overflow = '';
-  lastFocus?.focus?.();
+  const finish = () => {
+    el.sheet.hidden = true;
+    el.backdrop.hidden = true;
+    el.sheetBody.replaceChildren();
+    lastFocus?.focus?.();
+  };
+  clearTimeout(sheetTimer);
+  if (reduceMotion.matches) finish(); else sheetTimer = setTimeout(finish, 360);
 }
 
 $('#sheet-close').addEventListener('click', closeSheet);
@@ -702,7 +719,7 @@ function renderPlant({ plant: p, care, waterings, checks }) {
   const answered = new Set(checks.map((c) => c.parent_id).filter(Boolean));
 
   el.plantView.innerHTML = `
-    <a class="back" href="#">← Rośliny</a>
+    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Rośliny</a>
     <div class="pv-head">
       <span class="thumb ${photo ? 'has-photo' : ''}"><img alt="" ${photo ? `src="${esc(photo)}"` : ''}></span>
       <div>
@@ -752,7 +769,7 @@ function renderPlant({ plant: p, care, waterings, checks }) {
 
     <section class="section">
       <h2>Analizy</h2>
-      ${checks.length ? `<ul class="check-list">${checks.map((c) => renderCheck(c, answered.has(c.id))).join('')}</ul>`
+      ${checks.length ? `<ul class="check-list">${checks.map((c) => renderCheck(c)).join('')}</ul>`
         : '<p class="muted">Jeszcze żadnej. „Kontrola” ocenia ogólny stan i warunki, „Doktor” szuka przyczyny konkretnego problemu.</p>'}
     </section>
 
@@ -779,13 +796,9 @@ function renderPlant({ plant: p, care, waterings, checks }) {
 
   for (const head of el.plantView.querySelectorAll('.check-head')) {
     head.addEventListener('click', () => {
-      const body = head.nextElementSibling;
-      body.hidden = !body.hidden;
-      head.setAttribute('aria-expanded', String(!body.hidden));
+      const c = checks.find((x) => x.id === Number(head.dataset.id));
+      if (c) openCheckSheet(c, p.id, answered.has(c.id));
     });
-  }
-  for (const form of el.plantView.querySelectorAll('.answer-form')) {
-    form.addEventListener('submit', (e) => submitFollowUp(e, p.id));
   }
   window.scrollTo(0, 0);
 }
@@ -824,29 +837,55 @@ function renderResult(r) {
     ${r.watering ? `<p style="margin:8px 0 0"><b>Podlewanie:</b> ${esc(r.watering)}</p>` : ''}`;
 }
 
-function renderCheck(c, answered) {
+const photoSrc = (url) => `${url}?t=${encodeURIComponent(state.token)}`;
+
+/** One row in the analyses list; details open in the sheet. */
+function renderCheck(c) {
   const r = c.result ?? {};
+  const thumb = c.photos?.[0] ?? c.photo;
   return `<li class="check">
-    <button type="button" class="check-head" aria-expanded="false">
-      <span class="dot ${esc(r.status)}"></span>
-      <span class="title">${esc(r.title || STATUS_LABEL[r.status] || 'Analiza')}<br><span class="mode">${MODE_LABEL[c.mode] ?? esc(c.mode)}${c.parent_id ? ' · dopytanie' : ''}</span></span>
+    <button type="button" class="check-head" data-id="${c.id}">
+      <span class="thumb ${thumb ? 'has-photo' : ''}"><img alt="" loading="lazy" ${thumb ? `src="${esc(photoSrc(thumb))}"` : ''}></span>
+      <span class="title">
+        <span class="row"><span class="dot ${esc(r.status)}"></span>${esc(r.title || STATUS_LABEL[r.status] || 'Analiza')}</span>
+        <span class="mode">${MODE_LABEL[c.mode] ?? esc(c.mode)}${c.parent_id ? ' · dopytanie' : ''}${r.questions?.length ? ' · pyta' : ''}</span>
+      </span>
       <span class="when">${fmtDateTime(c.ts)}</span>
     </button>
-    <div class="check-body" hidden>
-      ${c.photo ? `<img class="photo" src="${esc(c.photo)}?t=${encodeURIComponent(state.token)}" alt="" loading="lazy">` : ''}
-      ${c.user_text ? `<p class="user-text">„${esc(c.user_text)}”</p>` : ''}
-      ${renderResult(r)}
-      ${r.questions?.length ? `<div class="questions">
-        <b>${answered ? 'Pytania (odpowiedziano)' : 'Doktor pyta:'}</b>
-        <ol>${r.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>
-        ${answered ? '' : `<form class="answer-form" data-parent="${c.id}">
-          <textarea name="text" placeholder="Odpowiedz po kolei…" required></textarea>
-          <button type="submit" class="btn btn-primary">Odpowiedz i zaktualizuj diagnozę</button>
-        </form>`}
-      </div>` : ''}
-      <p class="usage">${esc(c.model || '')}${c.input_tokens != null ? ` · ${c.input_tokens}+${c.output_tokens ?? 0} tokenów` : ''}${approxCost(c)}</p>
-    </div>
   </li>`;
+}
+
+/** Full analysis in the bottom sheet: photos, verdict, actions, and the doctor's questions with an answer form. */
+function renderCheckDetails(c, answered) {
+  const r = c.result ?? {};
+  const photos = c.photos?.length ? c.photos : (c.photo ? [c.photo] : []);
+  return `
+    ${photos.length ? `<div class="check-photos ${photos.length === 1 ? 'single' : ''}">${photos.map((u) => `<img src="${esc(photoSrc(u))}" alt="" loading="lazy">`).join('')}</div>` : ''}
+    ${c.user_text ? `<p class="user-text">„${esc(c.user_text)}”</p>` : ''}
+    ${renderResult(r)}
+    ${r.questions?.length ? `<div class="questions">
+      <b>${answered ? 'Pytania (odpowiedziano)' : 'Doktor pyta:'}</b>
+      <ol>${r.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>
+      ${answered ? '' : `<form class="answer-form" data-parent="${c.id}">
+        <textarea name="text" placeholder="Odpowiedz po kolei…" required></textarea>
+        <button type="submit" class="btn btn-primary btn-block">Odpowiedz i zaktualizuj diagnozę</button>
+      </form>`}
+    </div>` : ''}
+    <p class="usage">${fmtDateTime(c.ts)} · ${esc(c.model || '')}${c.input_tokens != null ? ` · ${c.input_tokens}+${c.output_tokens ?? 0} tokenów` : ''}${approxCost(c)}</p>`;
+}
+
+function openCheckSheet(c, plantId, answered) {
+  openSheet(c.result?.title || MODE_LABEL[c.mode] || 'Analiza');
+  fillCheckSheet(c, plantId, answered);
+}
+
+function fillCheckSheet(c, plantId, answered) {
+  el.sheetTitle.textContent = c.result?.title || MODE_LABEL[c.mode] || 'Analiza';
+  el.sheetBody.innerHTML = `${renderCheckDetails(c, answered)}
+    <button type="button" class="btn btn-block" id="check-close" style="margin-top:12px">Zamknij</button>`;
+  el.sheetBody.scrollTop = 0;
+  $('#check-close').addEventListener('click', closeSheet);
+  $('.answer-form', el.sheetBody)?.addEventListener('submit', (e) => submitFollowUp(e, plantId));
 }
 
 async function submitFollowUp(e, plantId) {
@@ -860,9 +899,10 @@ async function submitFollowUp(e, plantId) {
     fd.append('id', plantId);
     fd.append('parent_id', form.dataset.parent);
     fd.append('text', form.text.value.trim());
-    await api('health', { form: fd });
+    const { check } = await api('health', { form: fd });
     toast('Diagnoza zaktualizowana.');
-    showPlant(plantId);
+    fillCheckSheet(check, plantId, false);
+    showPlant(plantId); // refresh the list behind the sheet
   } catch (err) {
     toast(err.message, 'error', 6000);
     btn.disabled = false;
@@ -882,54 +922,59 @@ function openCheck(p, mode) {
       : 'Zrób zdjęcie całej rośliny w naturalnym świetle. Ocena obejmie stan liści, dopasowanie światła, doniczki i podlewania.'}</p>
     <form id="check-form" class="identify">
       <div class="photo-pick">
-        <button type="button" class="btn btn-primary" tabindex="-1">Zrób zdjęcie / wybierz z galerii</button>
-        <input type="file" accept="image/*" id="check-photo" aria-label="Zdjęcie" required>
+        <button type="button" class="btn btn-primary" tabindex="-1" id="check-pick-label">Zrób zdjęcie / wybierz z galerii</button>
+        <input type="file" accept="image/*" multiple id="check-photo" aria-label="Zdjęcia (do 4)">
       </div>
-      <img class="photo-preview" id="check-preview" alt="Podgląd" hidden>
+      <div class="photo-row" id="check-previews"></div>
+      <p class="muted" id="check-photo-hint" style="margin:0">Możesz dodać do 4 zdjęć — np. cała roślina, chory liść z bliska, podłoże.</p>
       <div class="field">
         <label for="check-text">${isDoctor ? 'Co jest nie tak?' : 'Uwagi (opcjonalnie)'}</label>
         <textarea id="check-text" name="text" maxlength="1000" ${isDoctor ? 'required' : ''} placeholder="${isDoctor ? 'np. od tygodnia żółkną dolne liście, na spodzie białe kropki' : 'np. przesadzona 2 tygodnie temu'}"></textarea>
       </div>
       <button type="submit" class="btn btn-primary btn-block" id="check-submit" disabled>${isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan'}</button>
-      <p class="muted" style="margin:6px 0 0">Analiza trwa 15–60 s i kosztuje kilka–kilkanaście groszy (Claude, płatność za użycie).</p>
+      <p class="muted" style="margin:6px 0 0">Analiza trwa 15–60 s i kosztuje kilka–kilkanaście groszy za zdjęcie (Claude, płatność za użycie).</p>
     </form>`;
 
-  let upload = null;
+  const uploads = []; // {blob, thumb}
+  const MAX = 4;
+  const renderPreviews = () => {
+    $('#check-previews').innerHTML = uploads.map((u) => `<img src="${u.thumb}" alt="">`).join('');
+    $('#check-submit').disabled = uploads.length === 0;
+    $('#check-pick-label').textContent = uploads.length ? `Dodaj kolejne zdjęcie (${uploads.length}/${MAX})` : 'Zrób zdjęcie / wybierz z galerii';
+    $('#check-photo').disabled = uploads.length >= MAX;
+  };
   $('#check-photo').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const out = await processImage(file);
-      upload = out.upload;
-      const prev = $('#check-preview');
-      prev.src = out.thumb;
-      prev.hidden = false;
-      $('#check-submit').disabled = false;
-    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+    const files = Array.from(e.target.files ?? []).slice(0, MAX - uploads.length);
+    e.target.value = '';
+    for (const file of files) {
+      try {
+        const out = await processImage(file);
+        uploads.push({ blob: out.upload, thumb: out.thumb });
+      } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+    }
+    renderPreviews();
   });
 
   $('#check-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    if (!upload) return;
+    if (!uploads.length) return;
     const btn = $('#check-submit');
     btn.disabled = true;
+    $('#check-photo').disabled = true;
     btn.innerHTML = '<span class="spinner"></span>Analizuję… to może potrwać do minuty';
     try {
       const fd = new FormData();
       fd.append('id', p.id);
       fd.append('mode', mode);
       fd.append('text', $('#check-text').value.trim());
-      fd.append('image', upload, 'photo.jpg');
+      uploads.forEach((u, i) => fd.append('image', u.blob, `photo-${i + 1}.jpg`));
       const { check } = await api('health', { form: fd });
-      el.sheetTitle.textContent = check.result?.title || 'Wynik';
-      el.sheetBody.innerHTML = `${renderResult(check.result)}
-        ${check.result?.questions?.length ? `<div class="questions"><b>Doktor pyta:</b><ol>${check.result.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol><p class="muted" style="margin:0">Odpowiesz w historii analiz na profilu rośliny.</p></div>` : ''}
-        <p class="usage">${approxCost(check).replace(' · ', '') || ''}</p>
-        <button type="button" class="btn btn-primary btn-block" id="check-close">Zamknij</button>`;
-      $('#check-close').addEventListener('click', () => { closeSheet(); showPlant(p.id); });
+      fillCheckSheet(check, p.id, false);
+      showPlant(p.id); // refresh the profile behind the sheet
     } catch (err) {
       toast(err.message, 'error', 7000);
       btn.disabled = false;
+      $('#check-photo').disabled = false;
       btn.textContent = isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan';
     }
   });

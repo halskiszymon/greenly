@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
   listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
-  insertCheck, getCheck, listChecks, checkChain,
+  insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto,
   tokenFor, safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
 } from './lib.js';
@@ -27,7 +27,8 @@ let ai = null; // Anthropic client, null when anthropicApiKey is not configured
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JSON_LIMIT = 2 * 1024 * 1024;
-const UPLOAD_LIMIT = 8 * 1024 * 1024;
+const UPLOAD_LIMIT = 24 * 1024 * 1024; // up to 4 check-up photos of ≤ 5 MB
+const MAX_CHECK_PHOTOS = 4;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -183,34 +184,40 @@ const actions = {
     const parentId = fd.get('parent_id') ? Number(fd.get('parent_id')) : null;
 
     let chain = [];
-    let image;
-    let buf = null;
-    let mediaType = null;
+    const images = [];       // {data, mediaType} sent to the model
+    const uploads = [];      // {buf, mediaType} stored on success (new checks only)
     if (parentId) {
       const parent = getCheck(db, parentId);
       if (!parent || parent.plant_id !== id) throw new HttpError(404, 'Nie ma takiej analizy.');
       if (!text) throw new HttpError(400, 'Wpisz odpowiedzi na pytania.');
       chain = checkChain(db, parentId);
       mode = chain[0].mode;
-      image = chain[0].photo ? readPhotoBase64(chain[0].photo) : null;
-      if (!image) throw new HttpError(410, 'Zdjęcie z pierwotnej analizy już nie istnieje — zrób nową analizę.');
+      for (const name of checkPhotoNames(chain[0])) {
+        const img = readPhotoBase64(name);
+        if (img) images.push(img);
+      }
+      if (!images.length) throw new HttpError(410, 'Zdjęcia z pierwotnej analizy już nie istnieją — zrób nową analizę.');
     } else {
-      const file = fd.get('image');
-      if (!(file instanceof Blob) || !file.size) throw new HttpError(400, 'Dodaj zdjęcie rośliny.');
-      buf = Buffer.from(await file.arrayBuffer());
-      if (buf.length > 5 * 1024 * 1024) throw new HttpError(413, 'Zdjęcie jest za duże (limit 5 MB).');
-      mediaType = sniffImageType(buf);
-      if (!mediaType) throw new HttpError(400, 'Plik nie jest poprawnym obrazem (JPEG, PNG lub WebP).');
+      const files = fd.getAll('image').filter((f) => f instanceof Blob && f.size);
+      if (!files.length) throw new HttpError(400, 'Dodaj zdjęcie rośliny.');
+      if (files.length > MAX_CHECK_PHOTOS) throw new HttpError(400, `Maksymalnie ${MAX_CHECK_PHOTOS} zdjęcia na jedną analizę.`);
       if (mode === 'doctor' && !text) throw new HttpError(400, 'Opisz krótko, co Cię niepokoi.');
-      image = { data: buf.toString('base64'), mediaType };
+      for (const file of files) {
+        const buf = Buffer.from(await file.arrayBuffer());
+        if (buf.length > 5 * 1024 * 1024) throw new HttpError(413, 'Zdjęcie jest za duże (limit 5 MB).');
+        const mediaType = sniffImageType(buf);
+        if (!mediaType) throw new HttpError(400, 'Plik nie jest poprawnym obrazem (JPEG, PNG lub WebP).');
+        uploads.push({ buf, mediaType });
+        images.push({ data: buf.toString('base64'), mediaType });
+      }
     }
 
     const { result, usage, model } = await analyzeHealth(ai, config, {
-      plant, care: groupCare(plant.group_key), mode, userText: text, image, chain,
+      plant, care: groupCare(plant.group_key), mode, userText: text, images, chain,
     });
-    const photo = buf ? storePhotoBuffer(buf, mediaType, id) : null;
+    const photos = uploads.map((u) => storePhotoBuffer(u.buf, u.mediaType, id));
     const checkId = insertCheck(db, {
-      plant_id: id, parent_id: parentId, mode, photo, user_text: text, result, model,
+      plant_id: id, parent_id: parentId, mode, photos, user_text: text, result, model,
       input_tokens: usage?.input_tokens ?? null, output_tokens: usage?.output_tokens ?? null,
     });
     sendJson(res, 200, { check: getCheck(db, checkId) });

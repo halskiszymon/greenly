@@ -129,10 +129,11 @@ function imageBlock(image) {
  * @param {object} o
  * @param {'checkup'|'doctor'} o.mode
  * @param {string} o.userText   user's description (doctor) or remarks (checkup); for a follow-up: the answers
- * @param {{data:string, mediaType:string}} o.image   root photo (base64)
+ * @param {Array<{data:string, mediaType:string}>} o.images   root photos (base64), 1–4
  * @param {Array<{user_text:string, result:object}>} o.chain   previous rounds, oldest first (empty for a new check)
  */
-export function buildHealthMessages({ plant, care, mode, userText, image, chain = [], today = new Date() }) {
+export function buildHealthMessages({ plant, care, mode, userText, images = [], image, chain = [], today = new Date() }) {
+  if (image && !images.length) images = [image];
   const task = mode === 'doctor'
     ? `Tryb DOKTOR. Właściciel uważa, że z rośliną jest coś nie tak. Jego opis: "${userText || 'brak opisu'}".
 Postaw hipotezy przyczyn od najbardziej prawdopodobnej, powiedz co sprawdzić, żeby je potwierdzić lub wykluczyć, i co zrobić natychmiast.
@@ -145,8 +146,8 @@ Pole "questions" zostaw puste.`;
   const first = {
     role: 'user',
     content: [
-      imageBlock(image),
-      { type: 'text', text: `${plantContext(plant, care, today)}\n\n${task.replace(userText || '', rootText || userText || '')}` },
+      ...images.map(imageBlock),
+      { type: 'text', text: `${images.length > 1 ? `Zdjęć: ${images.length} — traktuj je jako różne ujęcia tej samej rośliny.\n` : ''}${plantContext(plant, care, today)}\n\n${task.replace(userText || '', rootText || userText || '')}` },
     ],
   };
   const messages = [first];
