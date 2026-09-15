@@ -546,11 +546,15 @@ function openForm(ctx) {
 
   el.sheetBody.innerHTML = `
     <div class="species-head">
-      <span class="thumb ${photoSrc ? 'has-photo' : ''}"><img alt="" ${photoSrc ? `src="${esc(photoSrc)}"` : ''}></span>
+      <span class="thumb ${photoSrc ? 'has-photo' : ''}" id="form-thumb"><img alt="" ${photoSrc ? `src="${esc(photoSrc)}"` : ''}></span>
       <div>
         <div class="sci">${esc(ctx.species) || '—'}</div>
         <div class="com">${esc(commonName)}</div>
       </div>
+    </div>
+    <div class="photo-actions">
+      <span class="btn pick">${photoSrc ? 'Zmień zdjęcie' : 'Dodaj zdjęcie'}<input type="file" accept="image/*" id="form-photo" aria-label="Zdjęcie rośliny"></span>
+      <button type="button" class="btn btn-ghost" id="form-photo-remove" ${photoSrc ? '' : 'hidden'}>Usuń zdjęcie</button>
     </div>
     <div class="preview" id="preview" aria-live="polite">
       <strong id="preview-days"></strong>
@@ -596,6 +600,26 @@ function openForm(ctx) {
     </form>`;
 
   const form = $('#plant-form');
+  const draft = { photo: undefined }; // undefined = unchanged, data URL = new thumbnail, null = remove
+  const setThumb = (src) => {
+    const t = $('#form-thumb');
+    t.classList.toggle('has-photo', !!src);
+    t.querySelector('img').src = src || '';
+    $('#form-photo-remove').hidden = !src;
+    $('.photo-actions .pick').firstChild.textContent = src ? 'Zmień zdjęcie' : 'Dodaj zdjęcie';
+  };
+  $('#form-photo').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { thumb } = await processImage(file);
+      draft.photo = thumb;
+      setThumb(thumb);
+    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+  });
+  $('#form-photo-remove').addEventListener('click', () => { draft.photo = null; setThumb(null); });
+
   const update = () => {
     const days = estimate({
       base_summer: ctx.profile.summer,
@@ -630,7 +654,8 @@ function openForm(ctx) {
         last_watered: form.last_watered.value || null,
         note: form.note.value,
       };
-      if (ctx.thumb) payload.photo = ctx.thumb;
+      if (draft.photo !== undefined) payload.photo = draft.photo;
+      else if (ctx.thumb) payload.photo = ctx.thumb;
       const { plant } = await api('save', { json: payload });
       toast(isEdit ? 'Zapisano.' : 'Dodano roślinę.');
       closeSheet();
@@ -771,7 +796,7 @@ function approxCost(check) {
   return ` · ≈ $${usd.toFixed(3)}`;
 }
 
-function renderPlant({ plant: p, care, waterings, checks }) {
+function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
   const photo = photoUrl(p);
   const pct = fillPercent(p);
   const intervals = [];
@@ -800,6 +825,10 @@ function renderPlant({ plant: p, care, waterings, checks }) {
       <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Kontrola</button>
       <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Doktor</button>
       <button type="button" class="btn" id="pv-edit">Edytuj</button>
+    </div>
+    <div class="pv-actions two">
+      <button type="button" class="btn" id="pv-event">+ Zdarzenie</button>
+      <button type="button" class="btn" id="pv-split">Rozsadź</button>
     </div>
 
     <section class="section">
@@ -836,9 +865,12 @@ function renderPlant({ plant: p, care, waterings, checks }) {
         : '<p class="muted">Jeszcze żadnej. „Kontrola” ocenia ogólny stan i warunki, „Doktor” szuka przyczyny konkretnego problemu.</p>'}
     </section>
 
-    <section class="section">
-      <h2>Podlewania${waterings.length ? ` (${waterings.length})` : ''}</h2>
-      ${waterings.length ? `<div class="card"><ul class="water-list">${waterings.slice(0, 30).map((w) => `<li><span>${fmtDateTime(w.ts)}</span><button type="button" class="btn-x" data-w="${w.id}" aria-label="Usuń podlanie z ${fmtDateTime(w.ts)}">×</button></li>`).join('')}</ul></div>` : '<p class="muted">Brak zapisanych podlewań.</p>'}
+    <section class="section" id="pv-history">
+      <h2>Historia</h2>
+      <div class="filters" role="tablist">
+        ${[['all', 'Wszystko'], ['care', 'Zabiegi'], ['water', 'Podlewania'], ['ai', 'Analizy']].map(([k, l]) => `<button type="button" class="chip ${histFilter === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}
+      </div>
+      <ul class="timeline" id="timeline"></ul>
     </section>`;
 
   const put = (plant) => { const i = state.plants.findIndex((x) => x.id === p.id); if (i >= 0) state.plants[i] = plant; };
@@ -846,16 +878,35 @@ function renderPlant({ plant: p, care, waterings, checks }) {
     onWatered(plant) { put(plant); renderStatusInPlace(plant); toast(`Podlano: ${plant.name}`); },
     onSettled(plant) { if (plant) put(plant); showPlant(p.id); },
   }));
-  for (const x of el.plantView.querySelectorAll('.btn-x[data-w]')) {
-    x.addEventListener('click', async () => {
-      const w = waterings.find((r) => r.id === Number(x.dataset.w));
-      if (!w || !confirm(`Usunąć podlanie z ${fmtDateTime(w.ts)}?`)) return;
-      try {
-        const { plant } = await api('unwater', { json: { watering_id: w.id } });
-        put(plant);
-        toast('Usunięto podlanie.');
-        showPlant(p.id);
-      } catch (err) { toast(err.message, 'error'); }
+  $('#pv-event').addEventListener('click', () => openEventPicker(p));
+  $('#pv-split').addEventListener('click', () => openSplitForm(p));
+
+  const items = buildTimeline({ plant: p, waterings, checks, events, answered });
+  const drawTimeline = () => {
+    const list = histFilter === 'all' ? items : items.filter((it) => it.cat === histFilter);
+    $('#timeline').innerHTML = list.length ? list.map(renderTimelineItem).join('')
+      : '<li class="tl-empty">Nic tu jeszcze nie ma.</li>';
+    for (const li of $('#timeline').querySelectorAll('.tl-item')) {
+      const it = items.find((x) => x.key === li.dataset.key);
+      if (!it) continue;
+      if (it.check) li.addEventListener('click', (e) => { if (!e.target.closest('.btn-x')) openCheckSheet(it.check, p.id, answered.has(it.check.id)); });
+      li.querySelector('.btn-x')?.addEventListener('click', async () => {
+        if (!confirm(`Usunąć: ${it.title} (${fmtDateTime(it.ts)})?`)) return;
+        try {
+          const { plant } = await api(it.kind === 'water' ? 'unwater' : 'unevent', { json: it.kind === 'water' ? { watering_id: it.id } : { event_id: it.id } });
+          put(plant);
+          toast('Usunięto.');
+          showPlant(p.id);
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    }
+  };
+  drawTimeline();
+  for (const chip of el.plantView.querySelectorAll('.filters .chip')) {
+    chip.addEventListener('click', () => {
+      histFilter = chip.dataset.f;
+      for (const c of el.plantView.querySelectorAll('.filters .chip')) c.classList.toggle('active', c === chip);
+      drawTimeline();
     });
   }
   $('#pv-edit').addEventListener('click', () => openEdit(p.id));
@@ -1072,6 +1123,201 @@ function startThinking(host, kind) {
     finish() { stop(); thinkRecord(kind, (Date.now() - started) / 1000); bar.style.width = '100%'; },
     fail() { stop(); host.replaceChildren(); },
   };
+}
+
+// ---------------------------------------------------------------------------
+// care events, division, timeline
+// ---------------------------------------------------------------------------
+const EVENT_DEFS = {
+  repot: { icon: '🪴', label: 'Przesadzenie', hint: 'nowa doniczka lub podłoże' },
+  split: { icon: '✂️', label: 'Rozsadzenie', hint: 'podział na dwie rośliny' },
+  move: { icon: '🪟', label: 'Przestawienie', hint: 'nowe miejsce, inne światło' },
+  fertilize: { icon: '🧪', label: 'Nawożenie', hint: 'czym i ile' },
+  prune: { icon: '🌿', label: 'Przycięcie', hint: 'formowanie, usunięte liście' },
+  treat: { icon: '🐛', label: 'Zabieg / oprysk', hint: 'szkodniki, grzyb' },
+  shower: { icon: '🚿', label: 'Prysznic / zraszanie', hint: 'mycie liści' },
+  bloom: { icon: '🌸', label: 'Kwitnienie', hint: 'obserwacja' },
+  growth: { icon: '🌱', label: 'Nowy przyrost', hint: 'liść, pęd, korzeń' },
+  note: { icon: '📝', label: 'Notatka', hint: 'cokolwiek innego' },
+};
+let histFilter = 'all';
+
+const SHORT_MATERIAL = { terracotta: 'terakota', ceramic: 'ceramika', plastic: 'plastik', cachepot: 'bez odpływu' };
+const SHORT_LIGHT = { sun: 'pełne słońce', bright: 'jasno', partial: 'półcień', dark: 'ciemny kąt' };
+
+/** Human detail line for an event (Polish). */
+function eventDetail(e) {
+  const d = e.data ?? {};
+  const bits = [];
+  if (e.type === 'repot') bits.push(`${d.pot_cm_from && d.pot_cm_from !== d.pot_cm ? `${d.pot_cm_from} → ` : ''}${d.pot_cm} cm · ${SHORT_MATERIAL[d.pot_material] ?? esc(d.pot_material ?? '')}`);
+  if (e.type === 'move') bits.push(`${SHORT_LIGHT[d.light] ?? esc(d.light ?? '')}${d.dry_air ? ' · suche powietrze' : ''}`);
+  if (e.type === 'split') bits.push(d.role === 'child'
+    ? `odłączona od <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`
+    : `oddzielono <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`);
+  if (d.watered) bits.push('podlana przy okazji');
+  if (e.note) bits.push(esc(e.note));
+  return bits.join(' · ');
+}
+
+function buildTimeline({ plant, waterings, checks, events, answered }) {
+  const items = [];
+  for (const e of events) {
+    const def = EVENT_DEFS[e.type] ?? { icon: '•', label: e.type };
+    items.push({ key: `e${e.id}`, kind: 'event', id: e.id, cat: 'care', ts: e.ts, icon: def.icon, title: def.label, detail: eventDetail(e), removable: true });
+  }
+  for (const w of waterings) items.push({ key: `w${w.id}`, kind: 'water', id: w.id, cat: 'water', ts: w.ts, icon: '💧', title: 'Podlanie', detail: '', removable: true });
+  for (const c of checks) {
+    const r = c.result ?? {};
+    items.push({ key: `c${c.id}`, kind: 'check', id: c.id, cat: 'ai', ts: c.ts, icon: c.mode === 'doctor' ? '🩺' : '🔍', check: c,
+      title: r.title || STATUS_LABEL[r.status] || 'Analiza',
+      detail: `${MODE_LABEL[c.mode] ?? c.mode}${c.parent_id ? ' · dopytanie' : ''} · ${STATUS_LABEL[r.status] ?? ''}${r.questions?.length && !answered.has(c.id) ? ' · czeka na odpowiedź' : ''}` });
+  }
+  items.push({ key: 'created', kind: 'created', cat: 'care', ts: plant.created_at, icon: '🌿', title: 'Dodano do greenLy', detail: plant.species ? `<i>${esc(plant.species)}</i>` : '', removable: false });
+  items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+  return items;
+}
+
+function renderTimelineItem(it) {
+  return `<li class="tl-item ${it.check ? 'clickable' : ''}" data-key="${it.key}">
+    <span class="tl-ico" aria-hidden="true">${it.icon}</span>
+    <div class="tl-main"><div class="tl-title">${esc(it.title)}</div>${it.detail ? `<div class="tl-detail">${it.detail}</div>` : ''}</div>
+    <span class="tl-when">${fmtDateTime(it.ts)}</span>
+    ${it.removable ? `<button type="button" class="btn-x" aria-label="Usuń">×</button>` : ''}
+  </li>`;
+}
+
+function openEventPicker(p) {
+  openSheet(`Zdarzenie: ${p.name}`);
+  el.sheetBody.innerHTML = `<div class="type-grid">${Object.entries(EVENT_DEFS).map(([k, d]) =>
+    `<button type="button" class="type-btn" data-type="${k}"><span class="ico" aria-hidden="true">${d.icon}</span><span><b>${d.label}</b><small>${d.hint}</small></span></button>`).join('')}</div>`;
+  for (const b of el.sheetBody.querySelectorAll('.type-btn')) {
+    b.addEventListener('click', () => (b.dataset.type === 'split' ? openSplitForm(p) : openEventForm(p, b.dataset.type)));
+  }
+}
+
+function openEventForm(p, type) {
+  const def = EVENT_DEFS[type];
+  const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${l}</option>`).join('');
+  if (el.sheet.hidden) openSheet(`${def.icon} ${def.label}`); else el.sheetTitle.textContent = `${def.icon} ${def.label}`;
+  const extra = type === 'repot' ? `
+      <div class="field">
+        <label for="e-pot">Nowa średnica doniczki: <span class="range-value" id="e-pot-value">${p.pot_cm}</span> cm</label>
+        <input type="range" id="e-pot" name="pot_cm" min="6" max="40" step="1" value="${p.pot_cm}">
+      </div>
+      <div class="field"><label for="e-material">Doniczka</label><select id="e-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> Podlana przy tej okazji</label></div>
+      <div class="preview" id="e-preview"><strong id="e-days"></strong> po tej zmianie</div>`
+    : type === 'move' ? `
+      <div class="field"><label for="e-light">Światło w nowym miejscu</label><select id="e-light" name="light">${options(LIGHTS, p.light)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="dry_air" ${p.dry_air ? 'checked' : ''}> Suche powietrze / blisko grzejnika</label></div>
+      <div class="preview" id="e-preview"><strong id="e-days"></strong> po tej zmianie</div>`
+    : '';
+  el.sheetBody.innerHTML = `
+    <form id="event-form" autocomplete="off">
+      ${extra}
+      <div class="field"><label for="e-date">Data</label><input type="date" id="e-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
+      <div class="field"><label for="e-note">${type === 'note' ? 'Treść' : 'Notatka (opcjonalnie)'}</label>
+        <textarea id="e-note" name="note" maxlength="500" ${type === 'note' ? 'required' : ''} placeholder="${type === 'fertilize' ? 'np. Biohumus 1:20' : type === 'treat' ? 'np. mydło potasowe na przędziorki' : ''}"></textarea></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="e-back">Wstecz</button>
+        <button type="submit" class="btn btn-primary">Zapisz</button>
+      </div>
+    </form>`;
+  const form = $('#event-form');
+  const preview = () => {
+    if (!$('#e-days')) return;
+    const days = estimate({
+      base_summer: p.base_summer, base_winter: p.base_winter,
+      pot_cm: form.pot_cm ? form.pot_cm.value : p.pot_cm,
+      pot_material: form.pot_material ? form.pot_material.value : p.pot_material,
+      light: form.light ? form.light.value : p.light,
+      dry_air: form.dry_air ? form.dry_air.checked : p.dry_air,
+    });
+    $('#e-days').textContent = `co ${days} ${dni(days)}`;
+    if ($('#e-pot-value')) $('#e-pot-value').textContent = form.pot_cm.value;
+  };
+  form.addEventListener('input', preview);
+  preview();
+  $('#e-back').addEventListener('click', () => openEventPicker(p));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const data = {};
+      if (type === 'repot') Object.assign(data, { pot_cm: Number(form.pot_cm.value), pot_material: form.pot_material.value, watered: form.watered.checked });
+      if (type === 'move') Object.assign(data, { light: form.light.value, dry_air: form.dry_air.checked });
+      await api('event', { json: { plant_id: p.id, type, date: form.date.value, note: form.note.value.trim(), data } });
+      toast(`Zapisano: ${def.label.toLowerCase()}.`);
+      closeSheet();
+      await refresh();
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+  ($('#e-note') || form.querySelector('input,select')).focus();
+}
+
+function openSplitForm(p) {
+  const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${l}</option>`).join('');
+  if (el.sheet.hidden) openSheet(`✂️ Rozsadzenie: ${p.name}`); else el.sheetTitle.textContent = `✂️ Rozsadzenie: ${p.name}`;
+  el.sheetBody.innerHTML = `
+    <p class="muted" style="margin:0 0 12px">Powstanie druga roślina tego samego gatunku z tymi samymi warunkami — poniżej ustaw jej nazwę i doniczkę. Obie dostaną wpis w historii. Doniczkę tej rośliny zmienisz osobno w „Edytuj” lub przez „Przesadzenie”.</p>
+    <form id="split-form" autocomplete="off">
+      <div class="species-head">
+        <span class="thumb" id="split-thumb"><img alt=""></span>
+        <div><div class="sci">${esc(p.species) || '—'}</div><div class="com">${esc(p.common)}</div></div>
+      </div>
+      <div class="photo-actions"><span class="btn pick">Zdjęcie nowej rośliny<input type="file" accept="image/*" id="split-photo"></span></div>
+      <div class="field"><label for="s-name">Nazwa nowej rośliny</label><input type="text" id="s-name" name="name" maxlength="80" required value="${esc(p.name)} (2)"></div>
+      <div class="field">
+        <label for="s-pot">Średnica jej doniczki: <span class="range-value" id="s-pot-value">${p.pot_cm}</span> cm</label>
+        <input type="range" id="s-pot" name="pot_cm" min="6" max="40" step="1" value="${p.pot_cm}">
+      </div>
+      <div class="field"><label for="s-material">Doniczka</label><select id="s-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> Obie podlane przy rozsadzaniu</label></div>
+      <div class="field"><label for="s-date">Data</label><input type="date" id="s-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
+      <div class="field"><label for="s-note">Notatka (opcjonalnie)</label><textarea id="s-note" name="note" maxlength="500"></textarea></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="s-back">Wstecz</button>
+        <button type="submit" class="btn btn-primary">Rozsadź</button>
+      </div>
+    </form>`;
+  const form = $('#split-form');
+  let photo = null;
+  form.addEventListener('input', () => { $('#s-pot-value').textContent = form.pot_cm.value; });
+  $('#split-photo').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const { thumb } = await processImage(file);
+      photo = thumb;
+      $('#split-thumb').classList.add('has-photo');
+      $('#split-thumb img').src = thumb;
+    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+  });
+  $('#s-back').addEventListener('click', () => openEventPicker(p));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const { plant } = await api('split', { json: {
+        id: p.id, name: form.name.value.trim(), pot_cm: Number(form.pot_cm.value), pot_material: form.pot_material.value,
+        watered: form.watered.checked, date: form.date.value, note: form.note.value.trim(), photo,
+      } });
+      toast(`Utworzono „${plant.name}”.`);
+      closeSheet();
+      await refresh();
+      location.hash = `plant/${plant.id}`;
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+  $('#s-name').focus();
 }
 
 // ---------------------------------------------------------------------------

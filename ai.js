@@ -117,8 +117,29 @@ export function plantContext(plant, care, today = new Date()) {
   const since = daysSince(plant.last_watered, today);
   lines.push(since === null ? 'Ostatnie podlanie: brak danych' : `Ostatnie podlanie: ${since} dni temu (${plant.last_watered})`);
   if (plant.note) lines.push(`Notatka właściciela: ${plant.note}`);
+  if (plant.recent_events?.length) {
+    lines.push('Ostatnie zdarzenia (najnowsze pierwsze):');
+    for (const e of plant.recent_events) lines.push(`- ${e}`);
+  }
   lines.push(`Data: ${today.toISOString().slice(0, 10)}`);
   return lines.join('\n');
+}
+
+const EVENT_LABEL_PL = {
+  repot: 'przesadzenie', split: 'rozsadzenie', move: 'przestawienie', fertilize: 'nawożenie', prune: 'przycięcie',
+  treat: 'zabieg / oprysk', shower: 'prysznic / zraszanie', bloom: 'kwitnienie', growth: 'nowy przyrost', note: 'notatka',
+};
+
+/** One-line Polish description of an event row for the model context. */
+export function describeEvent(e) {
+  const d = e.data ?? {};
+  const bits = [];
+  if (e.type === 'repot') bits.push(`${d.pot_cm_from ? `${d.pot_cm_from} → ` : ''}${d.pot_cm} cm${d.pot_material ? `, ${MATERIAL_LABEL[d.pot_material] ?? d.pot_material}` : ''}`);
+  if (e.type === 'move') bits.push(`${LIGHT_LABEL[d.light] ?? d.light ?? ''}${d.dry_air ? ', suche powietrze' : ''}`);
+  if (e.type === 'split') bits.push(d.role === 'child' ? `odłączona od „${d.sibling_name}”` : `oddzielono „${d.sibling_name}”`);
+  if (d.watered) bits.push('podlana przy okazji');
+  if (e.note) bits.push(e.note);
+  return `${String(e.ts).slice(0, 10)} ${EVENT_LABEL_PL[e.type] ?? e.type}${bits.length ? `: ${bits.filter(Boolean).join('; ')}` : ''}`;
 }
 
 function imageBlock(image) {

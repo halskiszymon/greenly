@@ -205,6 +205,16 @@ export function openDb(file = DB_FILE) {
       output_tokens INTEGER
     );
     CREATE INDEX IF NOT EXISTS health_checks_plant ON health_checks(plant_id);
+    CREATE TABLE IF NOT EXISTS events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      plant_id    INTEGER NOT NULL REFERENCES plants(id) ON DELETE CASCADE,
+      type        TEXT NOT NULL,
+      ts          TEXT NOT NULL,
+      note        TEXT NOT NULL DEFAULT '',
+      data        TEXT NOT NULL DEFAULT '{}',
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS events_plant ON events(plant_id);
   `);
   // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not alter existing tables).
   ensureColumn(db, 'plants', 'profile', 'TEXT');
@@ -285,7 +295,9 @@ export function updatePlant(db, id, p) {
     p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.note, p.last_watered, id);
 }
 
-/** Timestamp for a watering: now, or noon local time of the given date (so a date-only entry sorts sanely). */
+/** Timestamp for a dated entry: now, or noon local time of the given date (so a date-only entry sorts sanely). */
+export function tsForDate(date) { return wateringTs(date); }
+
 function wateringTs(date) {
   if (!date || date === toDateString()) return new Date().toISOString();
   const d = parseDateString(date);
@@ -497,4 +509,38 @@ export async function loadConfig() {
   if (!cfg.password) throw new Error('config.js: "password" must not be empty.');
   if (cfg.timezone) process.env.TZ = cfg.timezone;
   return cfg;
+}
+
+// ---------------------------------------------------------------------------
+// Care events (repotting, division, moving, feeding, …) — the plant's timeline
+// ---------------------------------------------------------------------------
+export const EVENT_TYPES = ['repot', 'split', 'move', 'fertilize', 'prune', 'treat', 'shower', 'bloom', 'growth', 'note'];
+
+function decorateEvent(row) {
+  if (!row) return null;
+  let data = {};
+  try { data = JSON.parse(row.data) || {}; } catch { data = {}; }
+  return { ...row, data };
+}
+
+export function insertEvent(db, e) {
+  const r = db.prepare('INSERT INTO events (plant_id, type, ts, note, data, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(e.plant_id, e.type, e.ts ?? new Date().toISOString(), e.note ?? '', JSON.stringify(e.data ?? {}), new Date().toISOString());
+  return Number(r.lastInsertRowid);
+}
+
+export function getEvent(db, id) {
+  return decorateEvent(db.prepare('SELECT * FROM events WHERE id = ?').get(id));
+}
+
+export function listEvents(db, plantId, limit = 200) {
+  return db.prepare('SELECT * FROM events WHERE plant_id = ? ORDER BY ts DESC LIMIT ?').all(plantId, limit).map(decorateEvent);
+}
+
+/** Deletes an event row (side effects such as a changed pot size are not reverted). Returns the plant id or null. */
+export function deleteEvent(db, id) {
+  const row = db.prepare('SELECT plant_id FROM events WHERE id = ?').get(id);
+  if (!row) return null;
+  db.prepare('DELETE FROM events WHERE id = ?').run(id);
+  return Number(row.plant_id);
 }

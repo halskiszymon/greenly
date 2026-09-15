@@ -1,7 +1,7 @@
 // ai.js — request shape and response handling with a fake Anthropic client (no network).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeHealth, describeSpecies, buildHealthMessages, HEALTH_SCHEMA, AiError } from '../ai.js';
+import { analyzeHealth, describeSpecies, buildHealthMessages, HEALTH_SCHEMA, AiError, describeEvent, plantContext } from '../ai.js';
 import { loadCare, groupCare } from '../lib.js';
 
 loadCare();
@@ -93,4 +93,18 @@ test('describeSpecies uses the profile schema and no image', async () => {
   assert.equal(cap.params.model, 'claude-opus-5');
   assert.equal(typeof cap.params.messages[0].content, 'string');
   assert.ok(cap.params.output_config.format.schema.required.includes('pets'));
+});
+
+test('recent care events are described in the context', () => {
+  const ev = [
+    { type: 'repot', ts: '2026-09-01T12:00:00.000Z', note: '', data: { pot_cm_from: 15, pot_cm: 19, pot_material: 'plastic', watered: true } },
+    { type: 'split', ts: '2026-08-20T12:00:00.000Z', note: '', data: { role: 'parent', sibling_name: 'Monstera (2)' } },
+    { type: 'move', ts: '2026-08-10T12:00:00.000Z', note: 'na regał', data: { light: 'partial', dry_air: true } },
+  ].map(describeEvent);
+  assert.equal(ev[0], '2026-09-01 przesadzenie: 15 → 19 cm, plastik z otworami odpływowymi; podlana przy okazji');
+  assert.match(ev[1], /oddzielono „Monstera \(2\)”/);
+  assert.match(ev[2], /przestawienie: półcień, 1–2 m od okna, suche powietrze; na regał/);
+  const ctx = plantContext({ ...plant, recent_events: ev }, care, new Date(2026, 8, 4));
+  assert.match(ctx, /Ostatnie zdarzenia/);
+  assert.match(ctx, /przesadzenie: 15 → 19 cm/);
 });

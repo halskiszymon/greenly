@@ -350,3 +350,38 @@ img { display: block; max-width: 100%; }
   .think-leaf, .dots i, .undo-fill { animation: none; }
   .think-bar span, .think-text { transition: none; }
 }
+
+/* second action row on the profile */
+.pv-actions.two { grid-template-columns: 1fr 1fr; margin-top: -10px; }
+
+/* edit form: photo actions */
+.photo-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: -6px 0 14px; }
+.photo-actions .btn { padding: 8px 12px; font-size: 14px; }
+.photo-actions input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.photo-actions .pick { position: relative; overflow: hidden; }
+
+/* event type picker */
+.type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.type-btn { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); text-align: left; cursor: pointer; transition: background-color .18s ease, transform .12s ease; }
+.type-btn:hover { background: var(--water-soft); }
+.type-btn:active { transform: scale(.97); }
+.type-btn .ico { font-size: 22px; line-height: 1; }
+.type-btn b { display: block; font-size: 15px; }
+.type-btn small { color: var(--muted); font-size: 12px; }
+
+/* timeline */
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.filters .chip { cursor: pointer; border: 0; background: var(--surface); box-shadow: var(--shadow); transition: background-color .18s ease, color .18s ease; }
+.filters .chip.active { background: var(--water); color: #fff; }
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tl-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 12px; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); }
+.tl-item.clickable { cursor: pointer; }
+.tl-item.clickable:active { transform: scale(.985); }
+.tl-ico { font-size: 20px; line-height: 1; width: 26px; text-align: center; flex-shrink: 0; }
+.tl-main { flex: 1; min-width: 0; }
+.tl-title { font-weight: 600; font-size: 15px; }
+.tl-detail { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.tl-detail a { color: var(--water-ink); }
+.tl-when { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tl-item .btn-x { margin-left: -4px; }
+.tl-empty { color: var(--muted); font-size: 14px; margin: 0; }

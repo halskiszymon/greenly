@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openDb, loadCare, insertPlant, insertCheck, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings } from '../lib.js';
+import { openDb, loadCare, insertPlant, insertCheck, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings, insertEvent, listEvents, getEvent, deleteEvent, EVENT_TYPES } from '../lib.js';
 
 loadCare();
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'greenly-db-')), 'test.sqlite');
@@ -72,4 +72,18 @@ test('backfill creates a history row for legacy plants with a date but no rows',
   assert.equal(backfillWaterings(db), 1);
   assert.equal(listWaterings(db, id).length, 1);
   assert.equal(backfillWaterings(db), 0);
+});
+
+test('events: insert, list newest first, parsed data, delete, cascade with the plant', () => {
+  const db = openDb(tmp());
+  const id = insertPlant(db, basePlant);
+  assert.ok(EVENT_TYPES.includes('repot') && EVENT_TYPES.includes('split'));
+  const e1 = insertEvent(db, { plant_id: id, type: 'repot', ts: '2026-09-01T12:00:00.000Z', data: { pot_cm_from: 15, pot_cm: 19, pot_material: 'plastic' } });
+  const e2 = insertEvent(db, { plant_id: id, type: 'note', ts: '2026-09-10T12:00:00.000Z', note: 'nowy liść' });
+  assert.deepEqual(listEvents(db, id).map((e) => e.id), [e2, e1]);
+  assert.equal(getEvent(db, e1).data.pot_cm, 19);
+  assert.equal(deleteEvent(db, e2), id);
+  assert.equal(deleteEvent(db, e2), null);
+  deletePlant(db, id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM events').get().n, 0);
 });

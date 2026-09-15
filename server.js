@@ -10,13 +10,14 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
   listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
-  ensureWateringRow, deleteWatering,
+  ensureWateringRow, deleteWatering, tsForDate,
+  EVENT_TYPES, insertEvent, getEvent, listEvents, deleteEvent,
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto,
   tokenFor, safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
 } from './lib.js';
 import { runCron } from './cron.js';
-import { createClient as createAiClient, analyzeHealth, describeSpecies } from './ai.js';
+import { createClient as createAiClient, analyzeHealth, describeSpecies, describeEvent } from './ai.js';
 
 // NOTE: no top-level await anywhere in this module graph. Plesk/Passenger loads the
 // startup file with require(), and Node refuses require() on an ESM graph that
@@ -167,8 +168,91 @@ const actions = {
       care: groupCare(plant.group_key),
       waterings: listWaterings(db, id),
       checks: listChecks(db, id),
+      events: listEvents(db, id),
       ai: !!ai,
     });
+  },
+
+  // Care event: {plant_id, type, date?, note?, data?}. Repotting and moving also update the plant's
+  // conditions (the interval follows); data.watered logs a watering on the same date.
+  async event(req, res, url) {
+    requireAuth(req, url);
+    const b = await readJson(req);
+    const id = Number(b.plant_id);
+    const existing = getPlant(db, id);
+    if (!existing) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    const type = String(b.type ?? '');
+    if (!EVENT_TYPES.includes(type) || type === 'split') throw new HttpError(400, 'Nieznany typ zdarzenia.');
+    const date = b.date ? parseDateString(String(b.date)) && String(b.date) : null;
+    if (b.date && !date) throw new HttpError(400, 'Nieprawidłowa data.');
+    const note = str(b.note, 500);
+    const d = b.data && typeof b.data === 'object' ? b.data : {};
+    const data = {};
+    if (type === 'repot') {
+      const cm = Number(d.pot_cm);
+      if (!Number.isFinite(cm) || cm < 4 || cm > 80) throw new HttpError(400, 'Podaj średnicę doniczki (4–80 cm).');
+      if (!(d.pot_material in MATERIAL_FACTOR)) throw new HttpError(400, 'Nieznany materiał doniczki.');
+      Object.assign(data, { pot_cm_from: existing.pot_cm, pot_material_from: existing.pot_material, pot_cm: cm, pot_material: d.pot_material });
+      updatePlant(db, id, { ...existing, pot_cm: cm, pot_material: d.pot_material });
+    } else if (type === 'move') {
+      if (!(d.light in LIGHT_FACTOR)) throw new HttpError(400, 'Nieznany poziom światła.');
+      Object.assign(data, { light_from: existing.light, dry_air_from: !!existing.dry_air, light: d.light, dry_air: !!d.dry_air });
+      updatePlant(db, id, { ...existing, light: d.light, dry_air: d.dry_air ? 1 : 0 });
+    }
+    if (d.watered) {
+      data.watered = true;
+      waterPlant(db, id, date ?? toDateString());
+    }
+    const eventId = insertEvent(db, { plant_id: id, type, ts: tsForDate(date), note, data });
+    sendJson(res, 200, { event: getEvent(db, eventId), plant: listPlants(db).find((p) => p.id === id) });
+  },
+
+  async unevent(req, res, url) {
+    requireAuth(req, url);
+    const b = await readJson(req);
+    const plantId = deleteEvent(db, Number(b.event_id));
+    if (!plantId) throw new HttpError(404, 'Nie ma takiego zdarzenia.');
+    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === plantId) });
+  },
+
+  // Division: {id, name, pot_cm, pot_material, photo?, watered?, note?, date?} → a second plant with the same
+  // species and care profile; both get a `split` event pointing at each other.
+  async split(req, res, url) {
+    requireAuth(req, url);
+    const b = await readJson(req);
+    const id = Number(b.id);
+    const src = getPlant(db, id);
+    if (!src) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    const name = str(b.name, 80);
+    if (!name) throw new HttpError(400, 'Podaj nazwę nowej rośliny.');
+    const cm = Number(b.pot_cm ?? src.pot_cm);
+    if (!Number.isFinite(cm) || cm < 4 || cm > 80) throw new HttpError(400, 'Podaj średnicę doniczki (4–80 cm).');
+    const material = b.pot_material ?? src.pot_material;
+    if (!(material in MATERIAL_FACTOR)) throw new HttpError(400, 'Nieznany materiał doniczki.');
+    const date = b.date ? parseDateString(String(b.date)) && String(b.date) : null;
+    if (b.date && !date) throw new HttpError(400, 'Nieprawidłowa data.');
+    const note = str(b.note, 500);
+    const watered = !!b.watered;
+    const day = date ?? toDateString();
+
+    const child = {
+      name, species: src.species, common: src.common, genus: src.genus, family: src.family, group_key: src.group_key,
+      base_summer: src.base_summer, base_winter: src.base_winter, pot_cm: cm, pot_material: material,
+      light: src.light, dry_air: src.dry_air, photo: null, note: '', last_watered: watered ? day : src.last_watered,
+    };
+    const childId = insertPlant(db, child);
+    if (typeof b.photo === 'string' && b.photo.startsWith('data:')) {
+      try { updatePlant(db, childId, { ...child, photo: storePhoto(b.photo, childId) }); } catch (e) {
+        deletePlant(db, childId);
+        throw e;
+      }
+    }
+    if (watered) { waterPlant(db, id, day); waterPlant(db, childId, day); } else if (src.last_watered) { ensureWateringRow(db, childId, src.last_watered); }
+    const ts = tsForDate(date);
+    insertEvent(db, { plant_id: id, type: 'split', ts, note, data: { role: 'parent', sibling_id: childId, sibling_name: name, watered } });
+    insertEvent(db, { plant_id: childId, type: 'split', ts, note, data: { role: 'child', sibling_id: id, sibling_name: src.name, watered } });
+    const all = listPlants(db);
+    sendJson(res, 200, { plant: all.find((p) => p.id === childId), original: all.find((p) => p.id === id) });
   },
 
   // Claude analysis. Multipart: id, mode (checkup|doctor), text, image (new check) or parent_id + text (follow-up).
@@ -214,7 +298,7 @@ const actions = {
     }
 
     const { result, usage, model } = await analyzeHealth(ai, config, {
-      plant, care: groupCare(plant.group_key), mode, userText: text, images, chain,
+      plant: withRecentEvents(plant), care: groupCare(plant.group_key), mode, userText: text, images, chain,
     });
     const photos = uploads.map((u) => storePhotoBuffer(u.buf, u.mediaType, id));
     const checkId = insertCheck(db, {
@@ -233,7 +317,7 @@ const actions = {
     const plant = listPlants(db).find((p) => p.id === id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
     if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true });
-    const { result } = await describeSpecies(ai, config, { plant, care: groupCare(plant.group_key) });
+    const { result } = await describeSpecies(ai, config, { plant: withRecentEvents(plant), care: groupCare(plant.group_key) });
     setProfile(db, id, JSON.stringify(result));
     sendJson(res, 200, { profile: result, cached: false });
   },
@@ -456,6 +540,11 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, status, { error: status === 500 ? 'Błąd serwera.' : e.message });
   }
 });
+
+/** Plant copy with the last few care events described for the model. */
+function withRecentEvents(plant) {
+  return { ...plant, recent_events: listEvents(db, plant.id, 6).map(describeEvent) };
+}
 
 /** Dev-only stand-in for the Anthropic client (GREENLY_FAKE_AI=1): returns canned JSON matching the schemas. */
 function fakeAiClient() {

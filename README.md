@@ -99,6 +99,9 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 | GET | `photo/<file>` | stored photo, auth required |
 | GET | `plant/<id>` | profile view data: `{plant, care, waterings, checks, ai}` |
 | POST | `health` | multipart: `id`, `mode` (`checkup`\|`doctor`), `text`, 1–4 `image` fields — or `parent_id` + `text` to answer the doctor's questions (the root photos are re-sent); → `{check}`; 503 when no Anthropic key |
+| POST | `event` | `{plant_id, type, date?, note?, data?}` — care event (`repot`, `move`, `fertilize`, `prune`, `treat`, `shower`, `bloom`, `growth`, `note`); `repot` updates `pot_cm`/`pot_material` and `move` updates `light`/`dry_air` (the interval follows), `data.watered` also logs a watering → `{event, plant}` |
+| POST | `unevent` | `{event_id}` → deletes the event (condition changes are not reverted) |
+| POST | `split` | `{id, name, pot_cm?, pot_material?, photo?, watered?, date?, note?}` — division: creates a second plant with the same species/profile/conditions, logs a `split` event on both → `{plant, original}` |
 | POST | `profile` | `{id, refresh?}` → species care profile written by Claude, cached in `plants.profile` |
 | GET | `cron?secret=…` | runs the reminder; protected by `cronSecret`, not the login token |
 
@@ -108,6 +111,7 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
   pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
 - `waterings` — id, plant_id, ts. Every `last_watered` has a matching row: `save` adds one for a manually entered date, and `openDb()` backfills legacy plants without history.
 - `subs` — endpoint (PK), p256dh, auth, created_at
+- `events` — id, plant_id, type, ts, note, data (JSON: before/after values for repot/move, sibling for split, `watered`), created_at. The profile's timeline merges events, waterings, health checks and `created_at`.
 - `health_checks` — id, plant_id, parent_id (follow-up chain), mode, ts, photo, photos (JSON array), user_text, result (JSON), model, input_tokens, output_tokens
 - `plants.profile` — cached species profile JSON (added via `ensureColumn()` on start for databases created before it existed)
 
@@ -125,7 +129,7 @@ All endpoints are under `/api/` and return JSON. Everything except `login` and `
 `anthropicEffort` (default `medium`), `output_config.format` = JSON schema (`HEALTH_SCHEMA` / `PROFILE_SCHEMA`) and
 server-side refusal fallbacks (`fallbacks: "default"`). The user message carries the photo (base64, ≤ 1200 px from the
 client) plus a plain-text context block: species, care group and its tip, pot, light, dry air, computed interval,
-days since watering, owner's note, date. Doctor follow-ups replay the chain (root photo + context, assistant JSON,
+days since watering, owner's note, the last six care events, date. Doctor follow-ups replay the chain (root photo + context, assistant JSON,
 answers) so the model updates its verdict; `questions` is empty when nothing is missing.
 
 Token usage is stored per check and the UI shows an approximate cost from a small per-model price table in `app.js`.
