@@ -775,9 +775,11 @@ function route() {
 }
 
 async function showPlant(id) {
+  const switching = state.plantView !== id || !el.plantView.childElementCount;
   state.plantView = id;
   el.app.hidden = true;
   el.plantView.hidden = false;
+  if (switching) renderPlantSkeleton(state.plants.find((p) => p.id === id));
   try {
     const data = await api(`plant/${id}`);
     if (state.plantView !== id) return;
@@ -787,6 +789,33 @@ async function showPlant(id) {
     toast(err.message, 'error');
     location.hash = '';
   }
+}
+
+/** Instant header from the list data plus placeholder blocks — shown until /api/plant answers. */
+function renderPlantSkeleton(p) {
+  window.scrollTo(0, 0);
+  const photo = p ? photoUrl(p) : null;
+  const pct = p ? fillPercent(p) : 0;
+  el.plantView.innerHTML = `
+    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Rośliny</a>
+    <div class="pv-head">
+      <span class="thumb ${photo ? 'has-photo' : ''}"><img alt="" ${photo ? `src="${esc(photo)}"` : ''}></span>
+      <div>
+        <h1>${p ? esc(p.name) : '&nbsp;'}</h1>
+        <div class="sci">${p ? (esc(p.species) || '—') : ''}</div>
+        ${p ? `<div class="chips"><span class="chip soft level-${esc(p.match_level)}">${esc(p.group_label)} · ${LEVEL_LABEL[p.match_level]}</span></div>` : ''}
+      </div>
+    </div>
+    ${p ? `<div class="pv-status ${p.days_left !== null && p.days_left < 0 ? 'is-overdue' : ''} ${p.days_left === 0 ? 'is-today' : ''}">
+      <span class="bar ${p.days_left === null ? 'unknown' : ''}"><span class="bar-fill ${pct < 20 ? 'low' : ''}" style="width:${pct}%"></span></span>
+      <span class="plant-meta">${esc(metaText(p))}</span>
+      <button type="button" class="btn btn-water" disabled>Podlej</button>
+    </div>` : '<div class="skel" style="min-height:58px;margin-bottom:12px"></div>'}
+    <div class="pv-actions"><button class="btn btn-soft" disabled>Kontrola</button><button class="btn btn-soft" disabled>Doktor</button><button class="btn" disabled>Edytuj</button></div>
+    <div class="pv-actions two"><button class="btn" disabled>+ Zdarzenie</button><button class="btn" disabled>Rozsadź</button></div>
+    <section class="section"><h2>Warunki</h2><div class="skel" style="min-height:120px"></div></section>
+    <section class="section"><h2>Jak dbać</h2><div class="skel" style="min-height:140px"></div></section>
+    <section class="section"><h2>Historia</h2><div class="skel"></div></section>`;
 }
 
 function approxCost(check) {
@@ -944,7 +973,7 @@ function renderProfile(pr) {
     ${row('Temperatura', pr.temperature)}${row('Podłoże i doniczka', pr.soil_and_pot)}${row('Nawożenie', pr.fertilizing)}
     ${row('Przesadzanie', pr.repotting)}${row('Zwierzęta', pr.pets)}${row('Gdzie postawić', pr.placement)}
     ${pr.common_problems?.length ? `<p><b>Typowe problemy:</b></p><ul>${pr.common_problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    <div class="inline-actions"><button type="button" class="btn btn-ghost" id="pv-refresh-profile" ${state.ai ? '' : 'disabled'}>Napisz od nowa</button></div>
+    <div class="inline-actions"><button type="button" class="btn btn-soft" id="pv-refresh-profile" ${state.ai ? '' : 'disabled'}>Napisz od nowa</button></div>
   </div>`;
 }
 
@@ -1403,6 +1432,39 @@ function openCheck(p, mode) {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch((err) => console.error('SW registration failed:', err));
 }
+
+// ---------------------------------------------------------------------------
+// app updates: the service worker fetches the shell network-first, so a fresh open runs the
+// latest deploy. An app that stays open (iOS PWA resumed from the background) compares the
+// ETag of app.js on every return and offers a reload.
+// ---------------------------------------------------------------------------
+let assetTag = null;
+async function fetchAssetTag() {
+  try {
+    const res = await fetch('./app.js', { method: 'HEAD', cache: 'no-store' });
+    return res.headers.get('etag') || res.headers.get('last-modified');
+  } catch { return null; }
+}
+async function checkForUpdate() {
+  const tag = await fetchAssetTag();
+  if (!tag) return;
+  if (assetTag === null) { assetTag = tag; return; }
+  if (tag !== assetTag) $('#update-banner').hidden = false;
+}
+async function hardRefresh() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    reg?.active?.postMessage({ type: 'greenly-clear-cache' });
+    if ('caches' in window) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+    await reg?.update();
+  } catch { /* still reload */ }
+  location.reload();
+}
+$('#update-reload').addEventListener('click', hardRefresh);
+$('#app-refresh').addEventListener('click', () => { toast('Odświeżam…'); hardRefresh(); });
+checkForUpdate();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
+setInterval(checkForUpdate, 30 * 60 * 1000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.token && !el.app.hidden) refresh();

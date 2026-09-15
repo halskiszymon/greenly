@@ -137,6 +137,14 @@ Typical check-up on Opus 5: ~2–3k input + ~1–3k output tokens (thinking incl
 
 `GREENLY_FAKE_AI=1 node server.js` swaps in a canned client (no network) for UI work without a key.
 
+## Updates in the installed PWA
+
+`sw.js` fetches the shell (`index.html`, `app.js`, `styles.css`, manifest) **network-first** with a 4 s timeout and
+falls back to the cache, so every fresh open of the installed app runs the latest deploy and still works offline.
+An app that stays open (iOS resumes PWAs from memory) compares the `ETag`/`Last-Modified` of `app.js` on every
+return to the foreground and every 30 min; a change shows the "Jest nowa wersja" banner whose button clears all
+caches and reloads. The "Odśwież aplikację" link at the bottom of the list does the same on demand.
+
 ## Cron
 
 `node cron.js` once a day. Picks plants with `days_left <= 0`, skips those never watered and those already
