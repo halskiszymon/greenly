@@ -6,6 +6,8 @@ import Anthropic from '@anthropic-ai/sdk';
 
 export const DEFAULT_MODEL = 'claude-opus-5';
 export const DEFAULT_EFFORT = 'medium';
+export const MODELS = ['claude-opus-5', 'claude-sonnet-5'];
+export const EFFORTS = ['low', 'medium', 'high'];
 
 export class AiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -14,6 +16,18 @@ export class AiError extends Error {
 export function createClient(config) {
   if (!config.anthropicApiKey) return null;
   return new Anthropic({ apiKey: config.anthropicApiKey });
+}
+
+/** Cheapest possible round-trip that needs a valid key (no tokens billed). Throws AiError. */
+export async function verifyKey(client) {
+  try {
+    await client.models.list({ limit: 1 });
+  } catch (err) {
+    if (err instanceof Anthropic.AuthenticationError) throw new AiError(400, 'Anthropic odrzucił ten klucz. Sprawdź, czy skopiowałeś go w całości.');
+    if (err instanceof Anthropic.PermissionDeniedError) throw new AiError(400, 'Klucz nie ma uprawnień do API. Sprawdź ustawienia w console.anthropic.com.');
+    if (err instanceof Anthropic.APIError) throw new AiError(502, `Błąd Anthropic (${err.status}): ${err.message}`);
+    throw new AiError(502, 'Nie udało się połączyć z Anthropic.');
+  }
 }
 
 const MATERIAL_LABEL = {
@@ -208,7 +222,7 @@ async function callJson(client, { model, effort, system, messages, schema }) {
       output_config: { effort, format: { type: 'json_schema', schema } },
     });
   } catch (err) {
-    if (err instanceof Anthropic.AuthenticationError) throw new AiError(502, 'Anthropic odrzucił klucz API — sprawdź anthropicApiKey w config.js.');
+    if (err instanceof Anthropic.AuthenticationError) throw new AiError(502, 'Anthropic odrzucił Twój klucz API — sprawdź go w ustawieniach konta.');
     if (err instanceof Anthropic.RateLimitError) throw new AiError(429, 'Limit zapytań do Anthropic — spróbuj za chwilę.');
     if (err instanceof Anthropic.BadRequestError) throw new AiError(502, `Anthropic: ${err.message}`);
     if (err instanceof Anthropic.APIError) throw new AiError(502, `Błąd Anthropic (${err.status}): ${err.message}`);

@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 export const ROOT = import.meta.dirname;
-export const DATA_DIR = path.join(ROOT, 'data');
+export const DATA_DIR = process.env.GREENLY_DATA || path.join(ROOT, 'data'); // env: tests point it at a temp dir
 export const PHOTO_DIR = path.join(DATA_DIR, 'photos');
 export const DB_FILE = path.join(DATA_DIR, 'greenly.sqlite');
 
@@ -215,10 +215,43 @@ export function openDb(file = DB_FILE) {
       created_at  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS events_plant ON events(plant_id);
+    CREATE TABLE IF NOT EXISTS users (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      login            TEXT NOT NULL UNIQUE,
+      pass_hash        TEXT NOT NULL,
+      anthropic_key    TEXT,
+      anthropic_model  TEXT,
+      anthropic_effort TEXT,
+      created_at       TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token       TEXT PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at  TEXT NOT NULL,
+      last_seen   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+    CREATE TABLE IF NOT EXISTS invites (
+      code        TEXT PRIMARY KEY,
+      note        TEXT NOT NULL DEFAULT '',
+      max_uses    INTEGER NOT NULL DEFAULT 1,
+      uses        INTEGER NOT NULL DEFAULT 0,
+      disabled    INTEGER NOT NULL DEFAULT 0,
+      created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at  TEXT NOT NULL
+    );
   `);
   // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not alter existing tables).
   ensureColumn(db, 'plants', 'profile', 'TEXT');
   ensureColumn(db, 'health_checks', 'photos', 'TEXT'); // JSON array of file names; `photo` keeps the first one
+  ensureColumn(db, 'plants', 'user_id', 'INTEGER');
+  ensureColumn(db, 'subs', 'user_id', 'INTEGER');
+  ensureColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'users', 'invite_code', 'TEXT');
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS plants_user ON plants(user_id);
+    CREATE INDEX IF NOT EXISTS subs_user ON subs(user_id);
+  `);
   backfillWaterings(db);
   return db;
 }
@@ -265,24 +298,30 @@ export function groupCare(groupKey) {
   return c.groups[groupKey] ?? c.groups.universal;
 }
 
-export function listPlants(db, now = new Date()) {
-  const rows = db.prepare('SELECT * FROM plants').all();
+/** All plants of one user (or every plant when userId is null — used by the cron). */
+export function listPlants(db, userId = null, now = new Date()) {
+  const rows = userId === null
+    ? db.prepare('SELECT * FROM plants').all()
+    : db.prepare('SELECT * FROM plants WHERE user_id = ?').all(userId);
   return rows
     .map((r) => decoratePlant(r, now))
     .sort((a, b) => (a.days_left ?? -9999) - (b.days_left ?? -9999) || a.name.localeCompare(b.name, 'pl'));
 }
 
-export function getPlant(db, id) {
-  return db.prepare('SELECT * FROM plants WHERE id = ?').get(id) ?? null;
+/** Raw plant row; with userId only when the plant belongs to that user. */
+export function getPlant(db, id, userId = null) {
+  const row = db.prepare('SELECT * FROM plants WHERE id = ?').get(id) ?? null;
+  if (row && userId !== null && row.user_id !== userId) return null;
+  return row;
 }
 
 export function insertPlant(db, p) {
   const r = db.prepare(`
     INSERT INTO plants (name, species, common, genus, family, group_key, base_summer, base_winter,
-                        pot_cm, pot_material, light, dry_air, photo, note, last_watered, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        pot_cm, pot_material, light, dry_air, photo, note, last_watered, user_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(p.name, p.species, p.common, p.genus, p.family, p.group_key, p.base_summer, p.base_winter,
-    p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.note, p.last_watered, new Date().toISOString());
+    p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.note, p.last_watered, p.user_id ?? null, new Date().toISOString());
   return Number(r.lastInsertRowid);
 }
 
@@ -320,9 +359,9 @@ export function ensureWateringRow(db, id, date) {
 }
 
 /** Deletes one history row and recomputes last_watered from what is left. Returns the plant id or null. */
-export function deleteWatering(db, wateringId) {
-  const row = db.prepare('SELECT id, plant_id FROM waterings WHERE id = ?').get(wateringId);
-  if (!row) return null;
+export function deleteWatering(db, wateringId, userId = null) {
+  const row = db.prepare('SELECT w.id, w.plant_id, p.user_id FROM waterings w JOIN plants p ON p.id = w.plant_id WHERE w.id = ?').get(wateringId);
+  if (!row || (userId !== null && row.user_id !== userId)) return null;
   db.prepare('DELETE FROM waterings WHERE id = ?').run(wateringId);
   const latest = db.prepare('SELECT ts FROM waterings WHERE plant_id = ? ORDER BY ts DESC LIMIT 1').get(row.plant_id);
   const last = latest ? toDateString(new Date(latest.ts)) : null;
@@ -413,22 +452,26 @@ export function markNotified(db, ids, date = toDateString()) {
 /** Plants due today or overdue, watered at least once, not yet notified today. */
 export function duePlants(db, now = new Date()) {
   const today = toDateString(now);
-  return listPlants(db, now).filter((p) => p.last_watered && p.days_left !== null && p.days_left <= 0 && p.last_notified !== today);
+  return listPlants(db, null, now).filter((p) => p.last_watered && p.days_left !== null && p.days_left <= 0 && p.last_notified !== today);
 }
 
-export function listSubs(db) {
-  return db.prepare('SELECT endpoint, p256dh, auth FROM subs').all();
+export function listSubs(db, userId = null) {
+  return userId === null
+    ? db.prepare('SELECT endpoint, p256dh, auth, user_id FROM subs').all()
+    : db.prepare('SELECT endpoint, p256dh, auth, user_id FROM subs WHERE user_id = ?').all(userId);
 }
 
-export function upsertSub(db, { endpoint, keys }) {
+/** A browser subscription follows whoever is logged in on that device: re-subscribing moves it to that user. */
+export function upsertSub(db, { endpoint, keys, user_id }) {
   db.prepare(`
-    INSERT INTO subs (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
-  `).run(endpoint, keys.p256dh, keys.auth, new Date().toISOString());
+    INSERT INTO subs (endpoint, p256dh, auth, user_id, created_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, user_id = excluded.user_id
+  `).run(endpoint, keys.p256dh, keys.auth, user_id ?? null, new Date().toISOString());
 }
 
-export function deleteSub(db, endpoint) {
-  db.prepare('DELETE FROM subs WHERE endpoint = ?').run(endpoint);
+export function deleteSub(db, endpoint, userId = null) {
+  if (userId === null) db.prepare('DELETE FROM subs WHERE endpoint = ?').run(endpoint);
+  else db.prepare('DELETE FROM subs WHERE endpoint = ? AND user_id = ?').run(endpoint, userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,18 +524,234 @@ export function removePhoto(name) {
   if (name) fs.rmSync(path.join(PHOTO_DIR, name), { force: true });
 }
 
-// ---------------------------------------------------------------------------
-// Auth
-// ---------------------------------------------------------------------------
-
-export function tokenFor(password) {
-  return crypto.createHash('sha256').update('greenly|' + password).digest('hex');
+/** Photo files are named "<plantId>-<hex>.<ext>", so ownership is the owning plant's. */
+export function photoBelongsTo(db, name, userId) {
+  const m = /^(\d+)-[a-f0-9]{8}\.(jpg|png|webp)$/.exec(name ?? '');
+  if (!m) return false;
+  return !!getPlant(db, Number(m[1]), userId);
 }
+
+// ---------------------------------------------------------------------------
+// Auth: users, passwords (scrypt), sessions (random bearer tokens), per-user secrets (AES-GCM)
+// ---------------------------------------------------------------------------
 
 export function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}
+
+const SCRYPT = { N: 16384, r: 8, p: 1 };
+
+export function hashPassword(password) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(String(password), salt, 32, SCRYPT);
+  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+}
+
+export function verifyPassword(password, stored) {
+  const [alg, saltHex, hashHex] = String(stored ?? '').split('$');
+  if (alg !== 'scrypt' || !saltHex || !hashHex) return false;
+  const hash = crypto.scryptSync(String(password), Buffer.from(saltHex, 'hex'), 32, SCRYPT);
+  const expected = Buffer.from(hashHex, 'hex');
+  return hash.length === expected.length && crypto.timingSafeEqual(hash, expected);
+}
+
+/** Lower-case a-z, digits, dot, dash, underscore; 3–32 chars. Returns '' when invalid. */
+export function normalizeLogin(login) {
+  const l = String(login ?? '').trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]{2,31}$/.test(l) ? l : '';
+}
+
+export const MIN_PASSWORD = 8;
+
+export function createUser(db, { login, password, anthropic_key = null, anthropic_model = null, anthropic_effort = null, is_admin = false, invite_code = null }) {
+  const r = db.prepare(`
+    INSERT INTO users (login, pass_hash, anthropic_key, anthropic_model, anthropic_effort, is_admin, invite_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(login, hashPassword(password), anthropic_key, anthropic_model, anthropic_effort, is_admin ? 1 : 0, invite_code, new Date().toISOString());
+  return Number(r.lastInsertRowid);
+}
+
+export function setAdmin(db, id, isAdmin) {
+  db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
+}
+
+export function countAdmins(db) {
+  return Number(db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1').get().n);
+}
+
+/** Everything the admin panel lists: no secrets, just counts and activity. */
+export function listUsersAdmin(db) {
+  return db.prepare(`
+    SELECT u.id, u.login, u.is_admin, u.invite_code, u.created_at,
+           (u.anthropic_key IS NOT NULL) AS has_key,
+           (SELECT COUNT(*) FROM plants p WHERE p.user_id = u.id) AS plants,
+           (SELECT COUNT(*) FROM subs s WHERE s.user_id = u.id) AS subs,
+           (SELECT MAX(last_seen) FROM sessions s WHERE s.user_id = u.id) AS last_seen
+    FROM users u ORDER BY u.id
+  `).all().map((r) => ({ ...r, is_admin: !!r.is_admin, has_key: !!r.has_key }));
+}
+
+/** Removes the user with all their plants (and photo files), subscriptions and sessions. */
+export function deleteUser(db, id) {
+  const u = getUser(db, id);
+  if (!u) return false;
+  for (const p of db.prepare('SELECT id FROM plants WHERE user_id = ?').all(id)) deletePlant(db, p.id);
+  db.prepare('DELETE FROM subs WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(id); // sessions cascade
+  return true;
+}
+
+// Invite codes (admin panel). A code is valid while it is enabled and has uses left.
+export function createInvite(db, { note = '', max_uses = 1, created_by = null } = {}) {
+  const code = crypto.randomBytes(6).toString('base64url');
+  db.prepare('INSERT INTO invites (code, note, max_uses, created_by, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(code, note, Math.max(1, Number(max_uses) || 1), created_by, new Date().toISOString());
+  return code;
+}
+
+export function listInvites(db) {
+  return db.prepare(`
+    SELECT i.*, (SELECT COUNT(*) FROM users u WHERE u.invite_code = i.code) AS used_by
+    FROM invites i ORDER BY i.created_at DESC
+  `).all().map((r) => ({ ...r, disabled: !!r.disabled }));
+}
+
+export function setInviteDisabled(db, code, disabled) {
+  return db.prepare('UPDATE invites SET disabled = ? WHERE code = ?').run(disabled ? 1 : 0, code).changes > 0;
+}
+
+export function deleteInvite(db, code) {
+  return db.prepare('DELETE FROM invites WHERE code = ?').run(code).changes > 0;
+}
+
+/** Marks one use of a valid code. Returns true when the code was accepted. */
+export function consumeInvite(db, code) {
+  const r = db.prepare('UPDATE invites SET uses = uses + 1 WHERE code = ? AND disabled = 0 AND uses < max_uses').run(String(code ?? ''));
+  return r.changes > 0;
+}
+
+export function getUser(db, id) {
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) ?? null;
+}
+
+export function getUserByLogin(db, login) {
+  return db.prepare('SELECT * FROM users WHERE login = ?').get(login) ?? null;
+}
+
+export function countUsers(db) {
+  return Number(db.prepare('SELECT COUNT(*) AS n FROM users').get().n);
+}
+
+export function setUserPassword(db, id, password) {
+  db.prepare('UPDATE users SET pass_hash = ? WHERE id = ?').run(hashPassword(password), id);
+}
+
+/** Stores the (already encrypted) key; null removes it. Model/effort undefined = unchanged. */
+export function setUserAi(db, id, { anthropic_key, anthropic_model, anthropic_effort }) {
+  const u = getUser(db, id);
+  db.prepare('UPDATE users SET anthropic_key = ?, anthropic_model = ?, anthropic_effort = ? WHERE id = ?').run(
+    anthropic_key === undefined ? u.anthropic_key : anthropic_key,
+    anthropic_model === undefined ? u.anthropic_model : anthropic_model,
+    anthropic_effort === undefined ? u.anthropic_effort : anthropic_effort,
+    id,
+  );
+}
+
+export function createSession(db, userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)').run(token, userId, now, now);
+  return token;
+}
+
+/** User row for a session token, or null. last_seen is bumped at most once an hour. */
+export function sessionUser(db, token) {
+  if (!token || typeof token !== 'string' || token.length !== 64) return null;
+  const row = db.prepare('SELECT s.token, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token);
+  if (!row) return null;
+  if (Date.now() - Date.parse(row.last_seen) > 3600_000) {
+    db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?').run(new Date().toISOString(), token);
+  }
+  const { token: _t, last_seen: _l, ...user } = row;
+  return user;
+}
+
+export function deleteSession(db, token) {
+  db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+}
+
+export function deleteUserSessions(db, userId, keepToken = null) {
+  if (keepToken) db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, keepToken);
+  else db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+}
+
+/** Sessions unused for a year are dropped on start. */
+export function pruneSessions(db, maxAgeDays = 365) {
+  const cutoff = new Date(Date.now() - maxAgeDays * 86400000).toISOString();
+  db.prepare('DELETE FROM sessions WHERE last_seen < ?').run(cutoff);
+}
+
+// AES-256-GCM with a key derived from the server secret. Output: base64(iv | tag | ciphertext).
+function secretKey(secret) {
+  return crypto.createHash('sha256').update('greenly-secret|' + secret).digest();
+}
+
+export function encryptSecret(secret, text) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', secretKey(secret), iv);
+  const ct = Buffer.concat([cipher.update(String(text), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ct]).toString('base64');
+}
+
+export function decryptSecret(secret, blob) {
+  if (!blob) return null;
+  try {
+    const buf = Buffer.from(blob, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', secretKey(secret), buf.subarray(0, 12));
+    decipher.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+/** config.secretKey, or a random secret persisted in data/secret.key on first run. */
+export function loadSecret(config, file = path.join(DATA_DIR, 'secret.key')) {
+  if (config.secretKey) return String(config.secretKey);
+  if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
+  const secret = crypto.randomBytes(32).toString('hex');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, secret + '\n', { mode: 0o600 });
+  return secret;
+}
+
+/**
+ * First start after the user system: create the admin from config.password and give it every row
+ * that has no owner yet. Also adopts orphans on later starts (rows saved before the column existed).
+ * Returns the admin id, or null when users already existed and nothing was orphaned.
+ */
+export function ensureAdmin(db, config, secret) {
+  let adminId = null;
+  if (countUsers(db) === 0) {
+    adminId = createUser(db, {
+      login: normalizeLogin(config.adminLogin) || 'admin',
+      password: config.password,
+      anthropic_key: config.anthropicApiKey ? encryptSecret(secret, config.anthropicApiKey) : null,
+      anthropic_model: config.anthropicModel || null,
+      anthropic_effort: config.anthropicEffort || null,
+      is_admin: true,
+    });
+  }
+  const first = db.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get();
+  if (first && countAdmins(db) === 0) setAdmin(db, first.id, true); // there is always an admin: the oldest account
+  const owner = adminId ?? first?.id;
+  if (owner) {
+    db.prepare('UPDATE plants SET user_id = ? WHERE user_id IS NULL').run(owner);
+    db.prepare('UPDATE subs SET user_id = ? WHERE user_id IS NULL').run(owner);
+  }
+  pruneSessions(db);
+  return adminId;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,9 +797,9 @@ export function listEvents(db, plantId, limit = 200) {
 }
 
 /** Deletes an event row (side effects such as a changed pot size are not reverted). Returns the plant id or null. */
-export function deleteEvent(db, id) {
-  const row = db.prepare('SELECT plant_id FROM events WHERE id = ?').get(id);
-  if (!row) return null;
+export function deleteEvent(db, id, userId = null) {
+  const row = db.prepare('SELECT e.plant_id, p.user_id FROM events e JOIN plants p ON p.id = e.plant_id WHERE e.id = ?').get(id);
+  if (!row || (userId !== null && row.user_id !== userId)) return null;
   db.prepare('DELETE FROM events WHERE id = ?').run(id);
   return Number(row.plant_id);
 }

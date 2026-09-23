@@ -68,12 +68,14 @@ Fill in:
 
 | key | what |
 |---|---|
-| `password` | the single app password (login screen). Long and random. |
+| `password` | password of the first (admin) account, created on the first start. Change it later in the app, not here. |
+| `adminLogin` | login of that account, e.g. `szymon`. |
+| `inviteCode` | optional permanent invite code accepted at registration next to the codes you make in the admin panel. Leave empty to only use panel codes. |
+| `secretKey` | optional; encrypts users' Anthropic keys. Empty = generated into `data/secret.key` on first start. Back it up with the database; losing it means every user re-enters their key. |
 | `plantnetApiKey` | Pl@ntNet key — see step 4. Leave empty to disable photo identification (manual name entry still works). |
 | `plantnetLang` | `pl` for Polish common names (falls back to `en` automatically). |
-| `anthropicApiKey` | Anthropic API key — step 4b. Leave empty to hide check-ups, doctor and species profiles. |
-| `anthropicModel` | `claude-opus-5` (default) or `claude-sonnet-5` (cheaper). |
-| `anthropicEffort` | `low` / `medium` (default) / `high` — thoroughness vs. cost per analysis. |
+| `anthropicApiKey` | copied to the admin account on the first start only; afterwards every user manages their own key in *Konto*. |
+| `anthropicModel` / `anthropicEffort` | defaults for new accounts (`claude-opus-5` / `claude-sonnet-5`, `low` / `medium` / `high`). |
 | `vapid.subject` | `mailto:your@email` |
 | `vapid.publicKey` / `vapid.privateKey` | from step 5 |
 | `cronSecret` | long random string; only needed for the HTTP cron fallback |
@@ -88,12 +90,20 @@ Restart the app after editing `config.js` (it is read once at start).
 2. *Settings → API key* (an app is created automatically; the key is shown there).
 3. Free tier: **500 identification requests per day**. greenLy makes one request per photo.
 
-### 4b. Anthropic API key (optional)
+### 4b. Anthropic API key (optional, per user)
 
-1. <https://console.anthropic.com> → *API keys* → create a key, paste it as `anthropicApiKey`.
-2. Billing is pay-per-use from prepaid credits — no subscription. A check-up or diagnosis costs a few cents;
-   the app shows the approximate cost under each analysis (from the stored token counts).
-3. Restart the app after editing `config.js`.
+1. <https://console.anthropic.com> → *API keys* → create a key.
+2. In the app: *Konto → Klucz Anthropic* → paste → *Zapisz*. The app checks the key against Anthropic before storing it
+   (encrypted). Billing is pay-per-use from prepaid credits — no subscription. A check-up or diagnosis costs a few cents;
+   the app shows the approximate cost under each analysis.
+3. Users without a key see the AI buttons disabled with a hint pointing to *Konto*.
+
+### 4c. Users and invites
+
+The first start creates the admin from `config.js` (see step 3) and gives it all plants that existed before.
+*Konto → Otwórz panel administratora*: generate invite codes (single- or multi-use, with a note), disable or delete them,
+list users with their plant counts and last activity, reset a password, grant/revoke admin, delete an account with all its
+data. Registration is only possible with a valid code.
 
 ## 5. VAPID keys for web push
 
@@ -181,3 +191,17 @@ Check in this order:
 
 Git integration: push to `main` → Plesk pulls → **NPM install** (only if `package.json` changed) → **Restart App**.
 `config.js` and `data/` are untouched by deploys because they are gitignored.
+
+### Upgrading an existing single-password install to the user system
+
+1. Back up `data/` (`greenly.sqlite` + `photos/`) — the migration is additive, but a copy costs nothing.
+2. Pull the new code, run **NPM install** (the dependencies did not change, but it is harmless).
+3. Add to `config.js`: `adminLogin: 'szymon'` (any login you like). Optionally `inviteCode` and `secretKey`
+   (`node genkeys.js` prints fresh ones). Keep `password` and `anthropicApiKey` as they are — they seed the admin account.
+4. **Restart App**. The log shows `created user "szymon" from config.password and assigned existing plants to it`.
+5. Log in with that login and password. Your plants, history and push subscription are there. Open *Konto*: the key from
+   `config.js` is already set; you can now remove `anthropicApiKey` from `config.js` (it is ignored from now on).
+6. Make invite codes in the admin panel and send them to the people you want in. Each person installs greenLy on their
+   phone (the app asks for it right after registration) and adds their own Anthropic key if they want the AI features.
+
+Sessions from before the upgrade are invalid: everyone (i.e. you) logs in once more.

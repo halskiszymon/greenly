@@ -68,10 +68,12 @@ export function estimate({ base_summer, base_winter, pot_cm, pot_material, light
 // ---------------------------------------------------------------------------
 const state = {
   token: localStorage.getItem(TOKEN_KEY),
+  user: null,      // {login, has_key, key_hint, model, effort}
   plants: [],
   pushSub: null,
-  ai: false,       // server has an Anthropic key → check-ups, doctor and species profiles available
+  ai: false,       // this user has an Anthropic key → check-ups, doctor and species profiles available
   plantView: null, // currently open plant id
+  plantJson: null, // JSON of the data currently rendered in the profile view (skip re-render when unchanged)
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -89,7 +91,25 @@ const el = {
   toasts: $('#toasts'),
   btnPush: $('#btn-push'),
   iosHint: $('#ios-hint'),
+  installModal: $('#install-modal'),
+  installBackdrop: $('#install-backdrop'),
+  installBody: $('#install-body'),
 };
+
+// ---------------------------------------------------------------------------
+// local cache: the last server responses, so every view paints instantly on open and the
+// network only patches what changed (no skeleton → content flash on a warm start)
+// ---------------------------------------------------------------------------
+const CACHE_PREFIX = 'greenly.cache.';
+function cacheGet(key) {
+  try { return JSON.parse(localStorage.getItem(CACHE_PREFIX + key)); } catch { return null; }
+}
+function cacheSet(key, value) {
+  try { localStorage.setItem(CACHE_PREFIX + key, JSON.stringify(value)); } catch { /* quota — ignore */ }
+}
+function cacheClear() {
+  for (const k of Object.keys(localStorage)) if (k.startsWith(CACHE_PREFIX)) localStorage.removeItem(k);
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -134,8 +154,8 @@ async function api(action, { json, form } = {}) {
   }
   let data = {};
   try { data = await res.json(); } catch { /* non-JSON */ }
-  if (res.status === 401 && action !== 'login') {
-    logout();
+  if (res.status === 401 && action !== 'login' && action !== 'register' && action !== 'account') {
+    logout({ remote: false });
     throw new Error(data.error || 'Sesja wygasła — zaloguj się ponownie.');
   }
   if (!res.ok) throw new Error(data.error || `Błąd ${res.status}`);
@@ -154,14 +174,43 @@ function showLogin() {
   el.app.hidden = true;
   el.plantView.hidden = true;
   el.actions.hidden = true;
-  $('#login-password').focus();
+  $('#login-user').focus();
 }
 
-function logout() {
+function logout({ remote = true } = {}) {
+  if (remote && state.token) api('logout').catch(() => {});
   state.token = null;
+  state.user = null;
+  state.plants = [];
+  state.plantView = null;
+  state.plantJson = null;
   localStorage.removeItem(TOKEN_KEY);
+  cacheClear();
+  el.list.replaceChildren();
+  el.plantView.replaceChildren();
   closeSheet();
+  closeInstall();
+  if (location.hash) history.replaceState(null, '', location.pathname);
   showLogin();
+}
+
+function setAuthTab(tab) {
+  for (const b of $('#auth-tabs').children) {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  $('#login-form').hidden = tab !== 'login';
+  $('#register-form').hidden = tab !== 'register';
+  $(tab === 'login' ? '#login-user' : '#reg-user').focus();
+}
+$('#auth-tabs').addEventListener('click', (e) => { const b = e.target.closest('.auth-tab'); if (b) setAuthTab(b.dataset.tab); });
+
+async function startSession({ token, user }, { fresh = false } = {}) {
+  state.token = token;
+  state.user = user;
+  localStorage.setItem(TOKEN_KEY, token);
+  await enterApp({ fresh });
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
@@ -169,11 +218,9 @@ $('#login-form').addEventListener('submit', async (e) => {
   const btn = e.target.querySelector('button');
   btn.disabled = true;
   try {
-    const { token } = await api('login', { json: { password: $('#login-password').value } });
-    state.token = token;
-    localStorage.setItem(TOKEN_KEY, token);
+    const data = await api('login', { json: { login: $('#login-user').value.trim(), password: $('#login-password').value } });
     $('#login-password').value = '';
-    await enterApp();
+    await startSession(data);
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -181,26 +228,53 @@ $('#login-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('#btn-logout').addEventListener('click', logout);
+$('#register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const data = await api('register', { json: { login: $('#reg-user').value.trim(), password: $('#reg-password').value, invite: $('#reg-invite').value.trim() } });
+    $('#reg-password').value = '';
+    $('#reg-invite').value = '';
+    toast(`Witaj, ${data.user.login}!`);
+    await startSession(data, { fresh: true });
+  } catch (err) {
+    toast(err.message, 'error', 5000);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#btn-account').addEventListener('click', () => openAccount());
 
 // ---------------------------------------------------------------------------
 // plant list
 // ---------------------------------------------------------------------------
-async function enterApp() {
+async function enterApp({ fresh = false } = {}) {
   el.login.hidden = true;
-  el.app.hidden = false;
   el.actions.hidden = false;
   el.iosHint.hidden = !(isIOS && !isStandalone);
+  // Paint from the cache first, pick the view synchronously, then let the network patch things.
+  const cached = cacheGet('plants');
+  if (cached?.plants) {
+    state.plants = cached.plants;
+    state.user = cached.user ?? state.user;
+    state.ai = !!cached.user?.has_key;
+    renderList({ animate: false });
+  }
+  route();
+  if (fresh || shouldNagInstall()) openInstall({ consent: true });
   await refresh();
   refreshPushState();
-  route();
 }
 
 async function refresh() {
   try {
-    const { plants, ai } = await api('plants');
+    const { plants, ai, user } = await api('plants');
     state.plants = plants;
     state.ai = !!ai;
+    state.user = user;
+    cacheSet('plants', { plants, user });
     renderList();
     if (state.plantView) showPlant(state.plantView);
   } catch (err) {
@@ -221,9 +295,10 @@ function fillPercent(p) {
   return Math.max(0, Math.min(1, p.days_left / p.interval)) * 100;
 }
 
-function renderList() {
+function renderList({ animate = true } = {}) {
   const tpl = $('#tpl-plant');
   const existing = new Map([...el.list.children].map((li) => [Number(li.dataset.id), li]));
+  animate = animate && existing.size > 0; // first paint: bars sit at their value, no sweep
   const frag = document.createDocumentFragment();
 
   for (const p of state.plants) {
@@ -250,8 +325,10 @@ function renderList() {
     bar.setAttribute('aria-label', `Wilgotność ${Math.round(pct)}%`);
     fill.classList.toggle('low', pct < 20);
     // Force a layout pass first so the width transition also runs for freshly created cards.
-    if (!existing.has(p.id)) fill.getBoundingClientRect();
+    if (animate && !existing.has(p.id)) fill.getBoundingClientRect();
+    else if (!animate) fill.style.transition = 'none';
     fill.style.width = `${pct}%`;
+    if (!animate) requestAnimationFrame(() => { fill.style.transition = ''; });
     li.querySelector('.plant-meta').textContent = metaText(p);
     frag.appendChild(li);
   }
@@ -672,6 +749,7 @@ function openForm(ctx) {
     if (!confirm(`Usunąć „${form.name.value}”?`)) return;
     try {
       await api('delete', { json: { id: ctx.id } });
+      localStorage.removeItem(`${CACHE_PREFIX}plant.${ctx.id}`);
       toast('Usunięto.');
       closeSheet();
       state.plantView = null;
@@ -779,11 +857,21 @@ async function showPlant(id) {
   state.plantView = id;
   el.app.hidden = true;
   el.plantView.hidden = false;
-  if (switching) renderPlantSkeleton(state.plants.find((p) => p.id === id));
+  if (switching) {
+    // Last known data of this plant paints at once; only a never-opened plant gets the skeleton.
+    const cached = cacheGet(`plant.${id}`);
+    if (cached) { state.plantJson = JSON.stringify(cached); renderPlant(cached); }
+    else { state.plantJson = null; renderPlantSkeleton(state.plants.find((p) => p.id === id)); }
+    window.scrollTo(0, 0);
+  }
   try {
     const data = await api(`plant/${id}`);
     if (state.plantView !== id) return;
     state.ai = !!data.ai;
+    const json = JSON.stringify(data);
+    cacheSet(`plant.${id}`, data);
+    if (json === state.plantJson) return; // nothing changed — keep the DOM (and the scroll position) as is
+    state.plantJson = json;
     renderPlant(data);
   } catch (err) {
     toast(err.message, 'error');
@@ -851,8 +939,8 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
       <button type="button" class="btn btn-water" id="pv-water">Podlej</button>
     </div>
     <div class="pv-actions">
-      <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Kontrola</button>
-      <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Brak klucza Anthropic w config.js"'}>Doktor</button>
+      <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Kontrola</button>
+      <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Doktor</button>
       <button type="button" class="btn" id="pv-edit">Edytuj</button>
     </div>
     <div class="pv-actions two">
@@ -884,7 +972,7 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
 
     <section class="section" id="pv-profile">
       <h2>Profil gatunku</h2>
-      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.</p>
+      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.${state.ai ? '' : ' Żeby z tego korzystać, dodaj swój klucz Anthropic w <b>Konto</b>.'}</p>
         <button type="button" class="btn btn-soft" id="pv-gen-profile" ${state.ai ? '' : 'disabled'}>Opisz gatunek</button></div>`}
     </section>
 
@@ -950,7 +1038,6 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
       if (c) openCheckSheet(c, p.id, answered.has(c.id));
     });
   }
-  window.scrollTo(0, 0);
 }
 
 /** Updates the status card of the open profile without re-rendering the whole view (keeps the undo button alive). */
@@ -1423,6 +1510,316 @@ function openCheck(p, mode) {
       el.sheetTitle.textContent = isDoctor ? `Doktor: ${p.name}` : `Kontrola: ${p.name}`;
       toast(err.message, 'error', 7000);
     }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// "install me" prompt: greenLy is meant to run from the Home Screen (push works only there on
+// iOS). Shown after registration and on every browser visit until the user explicitly agrees
+// to use it in a tab. Never shown in the installed app.
+// ---------------------------------------------------------------------------
+const WEB_OK_KEY = 'greenly.webok';
+let installPrompt = null; // Chrome/Android/desktop: deferred beforeinstallprompt
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; $('#install-native')?.removeAttribute('hidden'); });
+window.addEventListener('appinstalled', () => { installPrompt = null; localStorage.setItem(WEB_OK_KEY, 'installed'); closeInstall(); toast('greenLy zainstalowane — otwórz aplikację z ikony.'); });
+
+function shouldNagInstall() {
+  return !isStandalone && !localStorage.getItem(WEB_OK_KEY);
+}
+
+function installSteps() {
+  const ua = navigator.userAgent;
+  if (isIOS) {
+    const chrome = /CriOS/.test(ua);
+    return { platform: 'iPhone / iPad', steps: [
+      `Stuknij <b>Udostępnij</b> ${chrome ? 'w menu Chrome (ikona ze strzałką w górę)' : '(kwadrat ze strzałką w górę na dolnym pasku Safari)'}.`,
+      'Przewiń listę i wybierz <b>Do ekranu początkowego</b>.',
+      'Stuknij <b>Dodaj</b> w prawym górnym rogu.',
+      'Otwieraj greenLy <b>z ikony</b> na ekranie początkowym i tam włącz powiadomienia.',
+    ] };
+  }
+  if (/Android/.test(ua)) {
+    return { platform: 'Android', steps: [
+      'Stuknij <b>⋮</b> (menu Chrome) w prawym górnym rogu.',
+      'Wybierz <b>Zainstaluj aplikację</b> albo <b>Dodaj do ekranu głównego</b>.',
+      'Potwierdź. Otwieraj greenLy z ikony.',
+    ] };
+  }
+  return { platform: 'Komputer', steps: [
+    'Chrome / Edge: kliknij ikonę instalacji po prawej stronie paska adresu albo <b>⋮ → Zainstaluj greenLy</b>.',
+    'Safari (macOS): <b>Plik → Dodaj do Docka</b>.',
+    'Na telefonie otwórz ten sam adres i dodaj greenLy do ekranu początkowego — tam działają powiadomienia.',
+  ] };
+}
+
+/** @param {{consent?:boolean}} o  consent: the user must tick the box to keep using the browser */
+function openInstall({ consent = false } = {}) {
+  const { platform, steps } = installSteps();
+  el.installBody.innerHTML = `
+    <div class="install-head"><img src="./img/icon-192.png" alt="" width="56" height="56"><div>
+      <h2 id="install-title">Zainstaluj greenLy</h2>
+      <p class="muted">Ta strona jest aplikacją — najlepiej działa z ekranu początkowego.</p></div></div>
+    <ul class="install-why">
+      <li>🔔 <b>Przypomnienia o podlewaniu</b> przychodzą tylko do zainstalowanej aplikacji${isIOS ? ' (na iPhonie w przeglądarce nie działają wcale)' : ''}.</li>
+      <li>📱 Pełny ekran, własna ikona, działa offline.</li>
+    </ul>
+    <p class="install-platform">${esc(platform)}</p>
+    <ol class="install-steps">${steps.map((t) => `<li>${t}</li>`).join('')}</ol>
+    <button type="button" class="btn btn-primary btn-block" id="install-native" ${installPrompt ? '' : 'hidden'}>Zainstaluj teraz</button>
+    ${consent ? `
+      <label class="install-consent"><input type="checkbox" id="install-ok"> Rozumiem, że bez instalacji nie dostanę przypomnień, i chcę używać greenLy w przeglądarce.</label>
+      <button type="button" class="btn btn-block" id="install-web" disabled>Używaj w przeglądarce</button>`
+      : '<button type="button" class="btn btn-block" id="install-close">Zamknij</button>'}`;
+  el.installBackdrop.hidden = false;
+  el.installModal.hidden = false;
+  void el.installModal.offsetHeight;
+  el.installBackdrop.classList.add('open');
+  el.installModal.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  $('#install-native').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    installPrompt = null;
+    if (outcome !== 'accepted') $('#install-native').hidden = true;
+  });
+  if (consent) {
+    $('#install-ok').addEventListener('change', (e) => { $('#install-web').disabled = !e.target.checked; });
+    $('#install-web').addEventListener('click', () => { localStorage.setItem(WEB_OK_KEY, new Date().toISOString()); closeInstall(); });
+  } else {
+    $('#install-close').addEventListener('click', closeInstall);
+  }
+}
+
+function closeInstall() {
+  if (el.installModal.hidden) return;
+  el.installBackdrop.classList.remove('open');
+  el.installModal.classList.remove('open');
+  document.body.style.overflow = el.sheet.hidden ? '' : 'hidden';
+  const finish = () => { el.installModal.hidden = true; el.installBackdrop.hidden = true; el.installBody.replaceChildren(); };
+  if (reduceMotion.matches) finish(); else setTimeout(finish, 260);
+}
+
+// ---------------------------------------------------------------------------
+// account sheet: Anthropic key + model, password, install help, logout
+// ---------------------------------------------------------------------------
+const MODEL_OPTIONS = [['claude-opus-5', 'Claude Opus 5 — najdokładniejszy'], ['claude-sonnet-5', 'Claude Sonnet 5 — tańszy']];
+const EFFORT_OPTIONS = [['low', 'niski — szybko i tanio'], ['medium', 'średni — domyślny'], ['high', 'wysoki — wnikliwie, drożej']];
+
+function openAccount() {
+  const u = state.user ?? { login: '…', has_key: false, model: 'claude-opus-5', effort: 'medium' };
+  const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  openSheet('Konto');
+  el.sheetBody.innerHTML = `
+    <p class="account-login">Zalogowano jako <b>${esc(u.login)}</b></p>
+
+    <section class="section">
+      <h2>Klucz Anthropic (Claude)</h2>
+      <div class="card">
+        <p class="muted" style="margin:0 0 10px">Kontrola, Doktor i opisy gatunków działają na Twoim własnym kluczu i obciążają Twoje konto Anthropic (kilka centów za analizę). Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki.</p>
+        <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? `Klucz ustawiony${u.key_hint ? ` · kończy się na …${esc(u.key_hint)}` : ''}` : 'Brak klucza — analizy AI są wyłączone'}</p>
+        <form id="key-form" autocomplete="off">
+          <div class="field">
+            <label for="acc-key">${u.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API'}</label>
+            <input type="password" id="acc-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="acc-model">Model</label><select id="acc-model">${options(MODEL_OPTIONS, u.model)}</select></div>
+            <div class="field"><label for="acc-effort">Dokładność</label><select id="acc-effort">${options(EFFORT_OPTIONS, u.effort)}</select></div>
+          </div>
+          <div class="form-actions">
+            ${u.has_key ? '<button type="button" class="btn btn-danger" id="acc-key-remove">Usuń klucz</button>' : ''}
+            <button type="submit" class="btn btn-primary">Zapisz</button>
+          </div>
+        </form>
+        <p class="hint" style="margin:10px 0 0">Klucz wygenerujesz na <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (API keys → Create key). Płacisz z góry doładowanymi środkami, bez abonamentu.</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Hasło</h2>
+      <form class="card" id="pass-form">
+        <div class="field"><label for="acc-pass-old">Obecne hasło</label><input type="password" id="acc-pass-old" autocomplete="current-password" required></div>
+        <div class="field"><label for="acc-pass-new">Nowe hasło (min. 8 znaków)</label><input type="password" id="acc-pass-new" autocomplete="new-password" minlength="8" required></div>
+        <div class="form-actions"><button type="submit" class="btn btn-primary">Zmień hasło</button></div>
+      </form>
+    </section>
+
+    <section class="section">
+      <h2>Aplikacja</h2>
+      <div class="card account-app">
+        ${isStandalone ? '<p class="muted" style="margin:0 0 10px">Używasz zainstalowanej aplikacji. 👍</p>' : '<p class="muted" style="margin:0 0 10px">Używasz greenLy w przeglądarce — przypomnienia działają dopiero po instalacji.</p>'}
+        <div class="inline-actions" style="margin:0">
+          <button type="button" class="btn" id="acc-install">Jak zainstalować</button>
+          <button type="button" class="btn" id="acc-refresh">Odśwież aplikację</button>
+        </div>
+      </div>
+    </section>
+
+    ${u.is_admin ? `<section class="section"><h2>Administracja</h2>
+      <div class="card"><p class="muted" style="margin:0 0 10px">Użytkownicy, kody zaproszeń, resetowanie haseł.</p>
+      <button type="button" class="btn btn-soft btn-block" id="acc-admin">Otwórz panel administratora</button></div></section>` : ''}
+
+    <button type="button" class="btn btn-danger btn-block" id="acc-logout">Wyloguj</button>`;
+  $('#acc-admin')?.addEventListener('click', () => openAdmin());
+
+  $('#key-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    const key = $('#acc-key').value.trim();
+    const payload = { model: $('#acc-model').value, effort: $('#acc-effort').value };
+    if (key) payload.anthropic_key = key;
+    btn.disabled = true;
+    btn.textContent = key ? 'Sprawdzam klucz…' : 'Zapisuję…';
+    try {
+      const { user } = await api('account', { json: payload });
+      state.user = user;
+      state.ai = !!user.has_key;
+      cacheSet('plants', { plants: state.plants, user });
+      toast(key ? 'Klucz działa — analizy AI włączone.' : 'Zapisano.');
+      openAccount();
+      if (state.plantView) showPlant(state.plantView);
+    } catch (err) {
+      toast(err.message, 'error', 6000);
+      btn.disabled = false;
+      btn.textContent = 'Zapisz';
+    }
+  });
+  $('#acc-key-remove')?.addEventListener('click', async () => {
+    if (!confirm('Usunąć klucz? Analizy AI przestaną działać do czasu dodania nowego.')) return;
+    try {
+      const { user } = await api('account', { json: { anthropic_key: null } });
+      state.user = user;
+      state.ai = false;
+      cacheSet('plants', { plants: state.plants, user });
+      toast('Klucz usunięty.');
+      openAccount();
+      if (state.plantView) showPlant(state.plantView);
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  $('#pass-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    try {
+      await api('account', { json: { current_password: $('#acc-pass-old').value, password: $('#acc-pass-new').value } });
+      toast('Hasło zmienione. Inne urządzenia zostały wylogowane.');
+      e.target.reset();
+    } catch (err) { toast(err.message, 'error', 5000); }
+    finally { btn.disabled = false; }
+  });
+  $('#acc-install').addEventListener('click', () => { closeSheet(); openInstall(); });
+  $('#acc-refresh').addEventListener('click', () => { toast('Odświeżam…'); hardRefresh(); });
+  $('#acc-logout').addEventListener('click', () => logout());
+}
+
+// ---------------------------------------------------------------------------
+// admin panel: users + invite codes
+// ---------------------------------------------------------------------------
+const fmtAgo = (iso) => {
+  if (!iso) return 'nigdy';
+  const d = (Date.now() - new Date(iso)) / 86400000;
+  if (d < 1 / 24) return 'przed chwilą';
+  if (d < 1) return `${Math.round(d * 24)} h temu`;
+  if (d < 30) return `${Math.round(d)} ${dni(Math.round(d))} temu`;
+  return fmtDate(iso);
+};
+
+async function openAdmin() {
+  openSheet('Administracja');
+  el.sheetBody.innerHTML = '<div class="skel" style="min-height:140px"></div>';
+  let data;
+  try { data = await api('admin'); } catch (err) { toast(err.message, 'error'); closeSheet(); return; }
+  renderAdmin(data);
+}
+
+function renderAdmin({ users, invites, config_invite }) {
+  const me = state.user?.login;
+  const userRow = (u) => `<li class="adm-row" data-id="${u.id}">
+    <div class="adm-main">
+      <b>${esc(u.login)}</b>${u.is_admin ? ' <span class="chip soft">admin</span>' : ''}${u.login === me ? ' <span class="muted">(ty)</span>' : ''}
+      <div class="adm-meta">${u.plants} ${u.plants === 1 ? 'roślina' : u.plants >= 2 && u.plants <= 4 ? 'rośliny' : 'roślin'} · klucz AI: ${u.has_key ? 'tak' : 'nie'} · powiadomienia: ${u.subs} · ostatnio: ${fmtAgo(u.last_seen)}${u.invite_code ? ` · kod: ${esc(u.invite_code)}` : ''}</div>
+    </div>
+    <div class="adm-actions">
+      <button type="button" class="btn" data-act="password">Hasło</button>
+      ${u.login === me ? '' : `<button type="button" class="btn" data-act="${u.is_admin ? 'unadmin' : 'admin'}">${u.is_admin ? 'Odbierz admina' : 'Nadaj admina'}</button>
+      <button type="button" class="btn btn-danger" data-act="delete">Usuń</button>`}
+    </div>
+  </li>`;
+  const inviteRow = (i) => `<li class="adm-row ${i.disabled || i.uses >= i.max_uses ? 'is-off' : ''}" data-code="${esc(i.code)}">
+    <div class="adm-main">
+      <b class="adm-code">${esc(i.code)}</b>${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}
+      <div class="adm-meta">użyto ${i.uses}/${i.max_uses}${i.disabled ? ' · wyłączony' : ''} · ${fmtDate(i.created_at)}</div>
+    </div>
+    <div class="adm-actions">
+      <button type="button" class="btn" data-act="copy">Kopiuj</button>
+      <button type="button" class="btn" data-act="${i.disabled ? 'enable' : 'disable'}">${i.disabled ? 'Włącz' : 'Wyłącz'}</button>
+      <button type="button" class="btn btn-danger" data-act="delete">Usuń</button>
+    </div>
+  </li>`;
+
+  el.sheetBody.innerHTML = `
+    <section class="section">
+      <h2>Kody zaproszeń</h2>
+      <form class="card adm-new" id="adm-invite-form">
+        <div class="field-row">
+          <div class="field"><label for="adm-note">Dla kogo (notatka)</label><input type="text" id="adm-note" maxlength="80" placeholder="np. Ola"></div>
+          <div class="field"><label for="adm-uses">Ile użyć</label><input type="number" id="adm-uses" min="1" max="100" value="1"></div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Wygeneruj kod</button>
+        ${config_invite ? '<p class="hint" style="margin:10px 0 0">Dodatkowo działa stały kod z config.js (bez limitu użyć).</p>' : ''}
+      </form>
+      <ul class="adm-list" id="adm-invites">${invites.length ? invites.map(inviteRow).join('') : '<li class="tl-empty">Brak kodów — wygeneruj pierwszy.</li>'}</ul>
+    </section>
+    <section class="section">
+      <h2>Użytkownicy (${users.length})</h2>
+      <ul class="adm-list" id="adm-users">${users.map(userRow).join('')}</ul>
+    </section>
+    <button type="button" class="btn btn-block" id="adm-back">Wróć do konta</button>`;
+
+  $('#adm-back').addEventListener('click', () => openAccount());
+  $('#adm-invite-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const { invites: list, code } = await api('admininvite', { json: { action: 'create', note: $('#adm-note').value, max_uses: Number($('#adm-uses').value) } });
+      toast(`Kod: ${code}`);
+      renderAdmin({ users, invites: list, config_invite });
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  $('#adm-invites').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const code = btn.closest('.adm-row').dataset.code;
+    const act = btn.dataset.act;
+    if (act === 'copy') {
+      try { await navigator.clipboard.writeText(code); toast('Skopiowano kod.'); } catch { prompt('Kod zaproszenia:', code); }
+      return;
+    }
+    if (act === 'delete' && !confirm(`Usunąć kod ${code}?`)) return;
+    try {
+      const { invites: list } = await api('admininvite', { json: { action: act, code } });
+      renderAdmin({ users, invites: list, config_invite });
+    } catch (err) { toast(err.message, 'error'); }
+  });
+  $('#adm-users').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    const row = btn.closest('.adm-row');
+    const id = Number(row.dataset.id);
+    const login = row.querySelector('b').textContent;
+    const act = btn.dataset.act;
+    const payload = { id, action: act };
+    if (act === 'delete' && !confirm(`Usunąć konto „${login}” razem ze wszystkimi roślinami i historią? Tego nie da się cofnąć.`)) return;
+    if (act === 'password') {
+      const pw = prompt(`Nowe hasło dla „${login}” (min. 8 znaków). Użytkownik zostanie wylogowany ze wszystkich urządzeń.`);
+      if (!pw) return;
+      payload.password = pw;
+    }
+    try {
+      const { users: list } = await api('adminuser', { json: payload });
+      toast(act === 'password' ? 'Hasło zmienione.' : act === 'delete' ? 'Konto usunięte.' : 'Zapisano.');
+      renderAdmin({ users: list, invites, config_invite });
+    } catch (err) { toast(err.message, 'error', 5000); }
   });
 }
 

@@ -403,3 +403,54 @@ img { display: block; max-width: 100%; }
 .skel::after { content: ''; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(28, 51, 38, .05), transparent); transform: translateX(-100%); animation: skel-sweep 1.4s ease-in-out infinite; }
 @keyframes skel-sweep { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) { .skel::after { animation: none; } .update-banner { animation: none; } }
+
+/* login / register */
+.login form { display: flex; flex-direction: column; gap: 10px; }
+.login label { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.auth-tabs { display: flex; gap: 4px; padding: 4px; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 8px; }
+.auth-tab { flex: 1; border: 0; border-radius: 9px; padding: 9px; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; transition: background-color .18s ease, color .18s ease; }
+.auth-tab.active { background: var(--water-soft); color: var(--water-ink); }
+.auth-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+
+/* centered modal (install prompt) */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(28, 51, 38, .45); z-index: 40; opacity: 0; transition: opacity .24s ease; }
+.modal-backdrop.open { opacity: 1; }
+.modal {
+  position: fixed; left: 16px; right: 16px; top: 50%; z-index: 41; margin: 0 auto; max-width: 440px;
+  max-height: calc(100dvh - 32px - var(--sat) - var(--sab)); overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--surface); border-radius: 20px; box-shadow: 0 16px 48px rgba(28, 51, 38, .28);
+  transform: translateY(-50%) scale(.96); opacity: 0; transition: transform .26s cubic-bezier(.2, .8, .2, 1), opacity .2s ease;
+}
+.modal.open { transform: translateY(-50%) scale(1); opacity: 1; }
+.modal-body { padding: 20px; }
+.install-head { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.install-head img { border-radius: 14px; flex-shrink: 0; }
+.install-head h2 { margin: 0 0 2px; font-size: 20px; font-weight: 600; }
+.install-head p { margin: 0; }
+.install-why { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.install-why li { padding: 8px 10px; background: var(--bg); border-radius: 10px; }
+.install-platform { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.install-steps { margin: 0 0 14px; padding-left: 22px; font-size: 15px; }
+.install-steps li { margin-bottom: 6px; }
+.install-consent { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--muted); margin: 6px 0 10px; cursor: pointer; }
+.install-consent input { flex-shrink: 0; width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--water); }
+#install-native { margin-bottom: 8px; }
+
+/* account sheet */
+.account-login { margin: 4px 0 14px; color: var(--muted); }
+.key-status { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 14px; font-weight: 600; }
+.key-status.on { background: var(--ok-soft); color: var(--ok); }
+.field input[type="password"] { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); width: 100%; min-height: 44px; }
+.sheet .section h2 { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .modal, .modal-backdrop, .auth-tab { transition: none; } }
+
+/* admin panel */
+.adm-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.adm-row { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.adm-row.is-off { opacity: .6; }
+.adm-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.adm-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; letter-spacing: .04em; }
+.adm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.adm-actions .btn { padding: 6px 10px; min-height: 36px; font-size: 14px; }
+.adm-new .field { margin-bottom: 10px; }
+.adm-new input[type="number"] { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); width: 100%; min-height: 44px; }

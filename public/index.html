@@ -20,17 +20,36 @@
   <a class="brand" href="./" aria-label="greenLy — strona główna">green<b>L</b>y</a>
   <div class="topbar-actions" id="topbar-actions" hidden>
     <button type="button" class="btn btn-ghost" id="btn-push" aria-pressed="false">Powiadomienia</button>
-    <button type="button" class="btn btn-ghost" id="btn-logout">Wyloguj</button>
+    <button type="button" class="btn btn-ghost" id="btn-account">Konto</button>
   </div>
 </header>
 
 <main id="view-login" class="view" hidden>
-  <form class="login" id="login-form" autocomplete="off">
-    <h1>Zaloguj się</h1>
-    <label for="login-password">Hasło</label>
-    <input id="login-password" type="password" name="password" autocomplete="current-password" required>
-    <button type="submit" class="btn btn-primary">Wejdź</button>
-  </form>
+  <div class="login">
+    <div class="auth-tabs" role="tablist" id="auth-tabs">
+      <button type="button" role="tab" class="auth-tab active" data-tab="login" aria-selected="true">Logowanie</button>
+      <button type="button" role="tab" class="auth-tab" data-tab="register" aria-selected="false">Rejestracja</button>
+    </div>
+    <form id="login-form">
+      <h1>Zaloguj się</h1>
+      <label for="login-user">Login</label>
+      <input id="login-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="login-password">Hasło</label>
+      <input id="login-password" type="password" name="password" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary">Wejdź</button>
+    </form>
+    <form id="register-form" hidden>
+      <h1>Załóż konto</h1>
+      <label for="reg-user">Login</label>
+      <input id="reg-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,31}" required>
+      <label for="reg-password">Hasło (min. 8 znaków)</label>
+      <input id="reg-password" type="password" name="password" autocomplete="new-password" minlength="8" required>
+      <label for="reg-invite">Kod zaproszenia</label>
+      <input id="reg-invite" type="text" name="invite" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      <button type="submit" class="btn btn-primary">Załóż konto</button>
+      <p class="auth-hint">Każde konto ma własne rośliny i własny klucz Claude do analiz. Kod zaproszenia dostaniesz od osoby, która prowadzi tę instancję.</p>
+    </form>
+  </div>
 </main>
 
 <main id="view-app" class="view" hidden>
@@ -52,6 +71,11 @@
   <span>Jest nowa wersja greenLy.</span>
   <button type="button" class="btn btn-primary" id="update-reload">Odśwież</button>
 </div>
+
+<div class="modal-backdrop" id="install-backdrop" hidden></div>
+<section class="modal" id="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" hidden>
+  <div class="modal-body" id="install-body"></div>
+</section>
 
 <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
 <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>

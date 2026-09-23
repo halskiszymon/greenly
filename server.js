@@ -13,19 +13,21 @@ import {
   ensureWateringRow, deleteWatering, tsForDate,
   EVENT_TYPES, insertEvent, getEvent, listEvents, deleteEvent,
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
-  upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto,
-  tokenFor, safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
+  upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto, photoBelongsTo,
+  safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
+  normalizeLogin, MIN_PASSWORD, verifyPassword, createUser, getUser, getUserByLogin, setUserPassword, setUserAi,
+  createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
+  setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
 } from './lib.js';
 import { runCron } from './cron.js';
-import { createClient as createAiClient, analyzeHealth, describeSpecies, describeEvent } from './ai.js';
+import { createClient as createAiClient, analyzeHealth, describeSpecies, describeEvent, verifyKey, MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT } from './ai.js';
 
 // NOTE: no top-level await anywhere in this module graph. Plesk/Passenger loads the
 // startup file with require(), and Node refuses require() on an ESM graph that
 // contains top-level await (ERR_REQUIRE_ASYNC_MODULE). Everything async lives in main().
 let config;
 let db;
-let TOKEN;
-let ai = null; // Anthropic client, null when anthropicApiKey is not configured
+let secret; // server secret for encrypting per-user API keys
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JSON_LIMIT = 2 * 1024 * 1024;
@@ -90,16 +92,55 @@ async function readMultipart(req) {
   }
 }
 
-function requireAuth(req, url) {
+function requestToken(req, url) {
   const header = req.headers.authorization ?? '';
   const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  const token = bearer || url.searchParams.get('t') || '';
-  if (!token || !safeEqual(token, TOKEN)) throw new HttpError(401, 'Brak autoryzacji — zaloguj się ponownie.');
+  return bearer || url.searchParams.get('t') || '';
+}
+
+/** Session → user row (without the token). Throws 401 when missing or unknown. */
+function requireAuth(req, url) {
+  const user = sessionUser(db, requestToken(req, url));
+  if (!user) throw new HttpError(401, 'Brak autoryzacji — zaloguj się ponownie.');
+  return user;
+}
+
+function requireAdmin(req, url) {
+  const user = requireAuth(req, url);
+  if (!user.is_admin) throw new HttpError(403, 'Tylko dla administratora.');
+  return user;
 }
 
 function str(v, max) {
   return String(v ?? '').trim().slice(0, max);
 }
+
+/** Public account info sent to the client. */
+function userInfo(u) {
+  const key = decryptSecret(secret, u.anthropic_key);
+  return {
+    login: u.login,
+    is_admin: !!u.is_admin,
+    has_key: !!key || !!process.env.GREENLY_FAKE_AI,
+    key_hint: key ? key.slice(-4) : null,
+    model: u.anthropic_model || DEFAULT_MODEL,
+    effort: u.anthropic_effort || DEFAULT_EFFORT,
+  };
+}
+
+/** Per-user Anthropic client and settings, or null when the user has no key. */
+function aiFor(u) {
+  if (process.env.GREENLY_FAKE_AI) return { client: fakeAiClient(), settings: {} };
+  const key = decryptSecret(secret, u.anthropic_key);
+  if (!key) return null;
+  return {
+    client: createAiClient({ anthropicApiKey: key }),
+    settings: { anthropicModel: u.anthropic_model || DEFAULT_MODEL, anthropicEffort: u.anthropic_effort || DEFAULT_EFFORT },
+  };
+}
+
+const NO_KEY = 'Brak klucza Anthropic — dodaj go w ustawieniach konta.';
+const myPlant = (u, id) => listPlants(db, u.id).find((p) => p.id === id);
 
 // ---------------------------------------------------------------------------
 // Pl@ntNet proxy
@@ -144,24 +185,145 @@ async function plantnetIdentify(file, lang) {
 
 const actions = {
   async login(req, res) {
-    const { password } = await readJson(req);
-    if (typeof password !== 'string' || !safeEqual(tokenFor(password), TOKEN)) {
+    const b = await readJson(req);
+    // A stale cached app.js may still send only {password}: that is the admin.
+    const login = normalizeLogin(b.login ?? config.adminLogin ?? 'admin');
+    const user = login ? getUserByLogin(db, login) : null;
+    if (!user || typeof b.password !== 'string' || !verifyPassword(b.password, user.pass_hash)) {
       await sleep(400);
-      throw new HttpError(401, 'Nieprawidłowe hasło.');
+      throw new HttpError(401, 'Nieprawidłowy login lub hasło.');
     }
-    sendJson(res, 200, { token: TOKEN });
+    sendJson(res, 200, { token: createSession(db, user.id), user: userInfo(user) });
+  },
+
+  // {login, password, invite} → new account + session. The code is an admin-made invite
+  // (or config.inviteCode, which never runs out).
+  async register(req, res) {
+    const b = await readJson(req);
+    const login = normalizeLogin(b.login);
+    if (!login) throw new HttpError(400, 'Login: 3–32 znaki, małe litery, cyfry, kropka, myślnik lub podkreślenie.');
+    if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+    if (getUserByLogin(db, login)) throw new HttpError(409, 'Ten login jest już zajęty.');
+    const code = typeof b.invite === 'string' ? b.invite.trim() : '';
+    const viaConfig = !!config.inviteCode && code && safeEqual(code, config.inviteCode);
+    if (!viaConfig && !consumeInvite(db, code)) {
+      await sleep(400);
+      throw new HttpError(403, 'Nieprawidłowy albo wykorzystany kod zaproszenia.');
+    }
+    const id = createUser(db, { login, password: b.password, invite_code: viaConfig ? null : code, anthropic_model: config.anthropicModel || null, anthropic_effort: config.anthropicEffort || null });
+    sendJson(res, 200, { token: createSession(db, id), user: userInfo(getUser(db, id)) });
+  },
+
+  // ---- admin panel ----
+  async admin(req, res, url) {
+    requireAdmin(req, url);
+    sendJson(res, 200, { users: listUsersAdmin(db), invites: listInvites(db), config_invite: !!config.inviteCode });
+  },
+
+  // {id, action: 'delete' | 'password' | 'admin' | 'unadmin', password?}
+  async adminuser(req, res, url) {
+    const me = requireAdmin(req, url);
+    const b = await readJson(req);
+    const id = Number(b.id);
+    const target = getUser(db, id);
+    if (!target) throw new HttpError(404, 'Nie ma takiego użytkownika.');
+    switch (b.action) {
+      case 'delete':
+        if (id === me.id) throw new HttpError(400, 'Nie możesz usunąć własnego konta z panelu.');
+        deleteUser(db, id);
+        break;
+      case 'password':
+        if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+        setUserPassword(db, id, b.password);
+        deleteUserSessions(db, id);
+        break;
+      case 'admin':
+        setAdmin(db, id, true);
+        break;
+      case 'unadmin':
+        if (id === me.id) throw new HttpError(400, 'Nie możesz odebrać sobie uprawnień.');
+        if (countAdmins(db) <= 1) throw new HttpError(400, 'Musi zostać co najmniej jeden administrator.');
+        setAdmin(db, id, false);
+        break;
+      default:
+        throw new HttpError(400, 'Nieznana akcja.');
+    }
+    sendJson(res, 200, { users: listUsersAdmin(db) });
+  },
+
+  // {action: 'create' | 'disable' | 'enable' | 'delete', code?, note?, max_uses?}
+  async admininvite(req, res, url) {
+    const me = requireAdmin(req, url);
+    const b = await readJson(req);
+    let code = null;
+    switch (b.action) {
+      case 'create':
+        code = createInvite(db, { note: str(b.note, 80), max_uses: Math.min(100, Number(b.max_uses) || 1), created_by: me.id });
+        break;
+      case 'disable':
+      case 'enable':
+        if (!setInviteDisabled(db, String(b.code ?? ''), b.action === 'disable')) throw new HttpError(404, 'Nie ma takiego kodu.');
+        break;
+      case 'delete':
+        if (!deleteInvite(db, String(b.code ?? ''))) throw new HttpError(404, 'Nie ma takiego kodu.');
+        break;
+      default:
+        throw new HttpError(400, 'Nieznana akcja.');
+    }
+    sendJson(res, 200, { invites: listInvites(db), code });
+  },
+
+  async logout(req, res, url) {
+    requireAuth(req, url);
+    deleteSession(db, requestToken(req, url));
+    sendJson(res, 200, { ok: true });
+  },
+
+  // Account settings: {anthropic_key?, model?, effort?, password?, current_password?}.
+  // anthropic_key: string = verify against Anthropic and store encrypted; null = remove.
+  async account(req, res, url) {
+    const u = requireAuth(req, url);
+    const b = await readJson(req);
+    const ai = {};
+    if (b.anthropic_key === null) ai.anthropic_key = null;
+    else if (typeof b.anthropic_key === 'string' && b.anthropic_key.trim()) {
+      const key = b.anthropic_key.trim();
+      if (!/^sk-ant-[A-Za-z0-9_-]{20,200}$/.test(key)) throw new HttpError(400, 'To nie wygląda na klucz Anthropic (zaczyna się od sk-ant-).');
+      await verifyKey(createAiClient({ anthropicApiKey: key }));
+      ai.anthropic_key = encryptSecret(secret, key);
+    }
+    if (b.model !== undefined) {
+      if (!MODELS.includes(b.model)) throw new HttpError(400, 'Nieznany model.');
+      ai.anthropic_model = b.model;
+    }
+    if (b.effort !== undefined) {
+      if (!EFFORTS.includes(b.effort)) throw new HttpError(400, 'Nieznany poziom analizy.');
+      ai.anthropic_effort = b.effort;
+    }
+    if (Object.keys(ai).length) setUserAi(db, u.id, ai);
+    if (b.password !== undefined) {
+      if (typeof b.current_password !== 'string' || !verifyPassword(b.current_password, u.pass_hash)) {
+        await sleep(400);
+        throw new HttpError(401, 'Obecne hasło jest nieprawidłowe.');
+      }
+      if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+      setUserPassword(db, u.id, b.password);
+      deleteUserSessions(db, u.id, requestToken(req, url)); // other devices must log in again
+    }
+    sendJson(res, 200, { user: userInfo(getUser(db, u.id)) });
   },
 
   async plants(req, res, url) {
-    requireAuth(req, url);
-    sendJson(res, 200, { plants: listPlants(db), today: toDateString(), ai: !!ai });
+    const u = requireAuth(req, url);
+    const info = userInfo(u);
+    sendJson(res, 200, { plants: listPlants(db, u.id), today: toDateString(), ai: info.has_key, user: info });
   },
 
   // Everything the profile view needs: plant, group care info, watering history, health checks.
   async plant(req, res, url, rest) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const id = Number(rest);
-    const plant = listPlants(db).find((p) => p.id === id);
+    const plant = myPlant(u, id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
     sendJson(res, 200, {
       plant,
@@ -169,17 +331,17 @@ const actions = {
       waterings: listWaterings(db, id),
       checks: listChecks(db, id),
       events: listEvents(db, id),
-      ai: !!ai,
+      ai: userInfo(u).has_key,
     });
   },
 
   // Care event: {plant_id, type, date?, note?, data?}. Repotting and moving also update the plant's
   // conditions (the interval follows); data.watered logs a watering on the same date.
   async event(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
     const id = Number(b.plant_id);
-    const existing = getPlant(db, id);
+    const existing = getPlant(db, id, u.id);
     if (!existing) throw new HttpError(404, 'Nie ma takiej rośliny.');
     const type = String(b.type ?? '');
     if (!EVENT_TYPES.includes(type) || type === 'split') throw new HttpError(400, 'Nieznany typ zdarzenia.');
@@ -204,24 +366,24 @@ const actions = {
       waterPlant(db, id, date ?? toDateString());
     }
     const eventId = insertEvent(db, { plant_id: id, type, ts: tsForDate(date), note, data });
-    sendJson(res, 200, { event: getEvent(db, eventId), plant: listPlants(db).find((p) => p.id === id) });
+    sendJson(res, 200, { event: getEvent(db, eventId), plant: myPlant(u, id) });
   },
 
   async unevent(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
-    const plantId = deleteEvent(db, Number(b.event_id));
+    const plantId = deleteEvent(db, Number(b.event_id), u.id);
     if (!plantId) throw new HttpError(404, 'Nie ma takiego zdarzenia.');
-    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === plantId) });
+    sendJson(res, 200, { plant: myPlant(u, plantId) });
   },
 
   // Division: {id, name, pot_cm, pot_material, photo?, watered?, note?, date?} → a second plant with the same
   // species and care profile; both get a `split` event pointing at each other.
   async split(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
     const id = Number(b.id);
-    const src = getPlant(db, id);
+    const src = getPlant(db, id, u.id);
     if (!src) throw new HttpError(404, 'Nie ma takiej rośliny.');
     const name = str(b.name, 80);
     if (!name) throw new HttpError(400, 'Podaj nazwę nowej rośliny.');
@@ -239,6 +401,7 @@ const actions = {
       name, species: src.species, common: src.common, genus: src.genus, family: src.family, group_key: src.group_key,
       base_summer: src.base_summer, base_winter: src.base_winter, pot_cm: cm, pot_material: material,
       light: src.light, dry_air: src.dry_air, photo: null, note: '', last_watered: watered ? day : src.last_watered,
+      user_id: u.id,
     };
     const childId = insertPlant(db, child);
     if (typeof b.photo === 'string' && b.photo.startsWith('data:')) {
@@ -251,18 +414,19 @@ const actions = {
     const ts = tsForDate(date);
     insertEvent(db, { plant_id: id, type: 'split', ts, note, data: { role: 'parent', sibling_id: childId, sibling_name: name, watered } });
     insertEvent(db, { plant_id: childId, type: 'split', ts, note, data: { role: 'child', sibling_id: id, sibling_name: src.name, watered } });
-    const all = listPlants(db);
+    const all = listPlants(db, u.id);
     sendJson(res, 200, { plant: all.find((p) => p.id === childId), original: all.find((p) => p.id === id) });
   },
 
   // Claude analysis. Multipart: id, mode (checkup|doctor), text, image (new check) or parent_id + text (follow-up).
   async health(req, res, url) {
-    requireAuth(req, url);
-    if (!ai) throw new HttpError(503, 'Brak klucza Anthropic w config.js — analiza niedostępna.');
+    const u = requireAuth(req, url);
+    const ai = aiFor(u);
+    if (!ai) throw new HttpError(503, NO_KEY);
     const fd = await readMultipart(req);
     const id = Number(fd.get('id'));
-    if (!getPlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
-    const plant = listPlants(db).find((p) => p.id === id);
+    const plant = myPlant(u, id);
+    if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
     let mode = String(fd.get('mode') ?? 'checkup');
     if (!['checkup', 'doctor'].includes(mode)) throw new HttpError(400, 'Nieznany tryb analizy.');
     const text = str(fd.get('text'), 1000);
@@ -297,7 +461,7 @@ const actions = {
       }
     }
 
-    const { result, usage, model } = await analyzeHealth(ai, config, {
+    const { result, usage, model } = await analyzeHealth(ai.client, ai.settings, {
       plant: withRecentEvents(plant), care: groupCare(plant.group_key), mode, userText: text, images, chain,
     });
     const photos = uploads.map((u) => storePhotoBuffer(u.buf, u.mediaType, id));
@@ -310,14 +474,15 @@ const actions = {
 
   // Species care profile written by Claude, cached on the plant row. {id, refresh?}
   async profile(req, res, url) {
-    requireAuth(req, url);
-    if (!ai) throw new HttpError(503, 'Brak klucza Anthropic w config.js — opis niedostępny.');
+    const u = requireAuth(req, url);
+    const ai = aiFor(u);
+    if (!ai) throw new HttpError(503, NO_KEY);
     const b = await readJson(req);
     const id = Number(b.id);
-    const plant = listPlants(db).find((p) => p.id === id);
+    const plant = myPlant(u, id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
     if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true });
-    const { result } = await describeSpecies(ai, config, { plant: withRecentEvents(plant), care: groupCare(plant.group_key) });
+    const { result } = await describeSpecies(ai.client, ai.settings, { plant: withRecentEvents(plant), care: groupCare(plant.group_key) });
     setProfile(db, id, JSON.stringify(result));
     sendJson(res, 200, { profile: result, cached: false });
   },
@@ -348,10 +513,10 @@ const actions = {
   },
 
   async save(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
     const id = b.id ? Number(b.id) : null;
-    const existing = id ? getPlant(db, id) : null;
+    const existing = id ? getPlant(db, id, u.id) : null;
     if (id && !existing) throw new HttpError(404, 'Nie ma takiej rośliny.');
 
     const name = str(b.name, 80);
@@ -389,6 +554,7 @@ const actions = {
       note: str(b.note, 500),
       last_watered,
       photo: existing?.photo ?? null,
+      user_id: u.id,
     };
 
     let plantId = id;
@@ -410,34 +576,34 @@ const actions = {
 
     updatePlant(db, plantId, plant);
     if (plant.last_watered && plant.last_watered !== existing?.last_watered) ensureWateringRow(db, plantId, plant.last_watered);
-    const saved = listPlants(db).find((p) => p.id === plantId);
-    sendJson(res, 200, { plant: saved });
+    sendJson(res, 200, { plant: myPlant(u, plantId) });
   },
 
   async water(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
     const id = Number(b.id);
-    if (!getPlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    if (!getPlant(db, id, u.id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
     const date = b.date ? String(b.date) : toDateString();
     if (!parseDateString(date)) throw new HttpError(400, 'Nieprawidłowa data.');
     const watering_id = waterPlant(db, id, date);
-    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === id), watering_id });
+    sendJson(res, 200, { plant: myPlant(u, id), watering_id });
   },
 
   // Removes one watering (undo, or a wrong entry in the history) and recomputes last_watered.
   async unwater(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
-    const plantId = deleteWatering(db, Number(b.watering_id));
+    const plantId = deleteWatering(db, Number(b.watering_id), u.id);
     if (!plantId) throw new HttpError(404, 'Nie ma takiego podlania.');
-    sendJson(res, 200, { plant: listPlants(db).find((p) => p.id === plantId) });
+    sendJson(res, 200, { plant: myPlant(u, plantId) });
   },
 
   async delete(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
-    if (!deletePlant(db, Number(b.id))) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    const id = Number(b.id);
+    if (!getPlant(db, id, u.id) || !deletePlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
     sendJson(res, 200, { ok: true });
   },
 
@@ -447,25 +613,25 @@ const actions = {
   },
 
   async subscribe(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
     if (typeof b.endpoint !== 'string' || !b.endpoint.startsWith('https://') || !b.keys?.p256dh || !b.keys?.auth) {
       throw new HttpError(400, 'Nieprawidłowa subskrypcja push.');
     }
-    upsertSub(db, { endpoint: b.endpoint, keys: { p256dh: String(b.keys.p256dh), auth: String(b.keys.auth) } });
+    upsertSub(db, { endpoint: b.endpoint, keys: { p256dh: String(b.keys.p256dh), auth: String(b.keys.auth) }, user_id: u.id });
     sendJson(res, 200, { ok: true });
   },
 
   async unsubscribe(req, res, url) {
-    requireAuth(req, url);
+    const u = requireAuth(req, url);
     const b = await readJson(req);
-    if (typeof b.endpoint === 'string') deleteSub(db, b.endpoint);
+    if (typeof b.endpoint === 'string') deleteSub(db, b.endpoint, u.id);
     sendJson(res, 200, { ok: true });
   },
 
   async photo(req, res, url, rest) {
-    requireAuth(req, url);
-    if (!/^\d+-[a-f0-9]{8}\.(jpg|png|webp)$/.test(rest ?? '')) throw new HttpError(404, 'Nie znaleziono.');
+    const u = requireAuth(req, url);
+    if (!photoBelongsTo(db, rest, u.id)) throw new HttpError(404, 'Nie znaleziono.');
     const file = path.join(PHOTO_DIR, rest);
     if (!fs.existsSync(file)) throw new HttpError(404, 'Nie znaleziono.');
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)], 'Cache-Control': 'private, max-age=86400' });
@@ -531,7 +697,7 @@ const server = http.createServer(async (req, res) => {
   const action = actions[m[1]];
   try {
     if (!action) throw new HttpError(404, 'Nieznana akcja.');
-    const isGet = ['plants', 'plant', 'vapid', 'photo', 'cron'].includes(m[1]);
+    const isGet = ['plants', 'plant', 'vapid', 'photo', 'cron', 'admin'].includes(m[1]);
     if (isGet ? req.method !== 'GET' : req.method !== 'POST') throw new HttpError(405, 'Niedozwolona metoda.');
     await action(req, res, url, m[2]);
   } catch (e) {
@@ -565,11 +731,12 @@ async function main() {
   config = await loadConfig();
   loadCare();
   db = openDb();
-  TOKEN = tokenFor(config.password);
-  ai = createAiClient(config);
-  if (process.env.GREENLY_FAKE_AI) ai = fakeAiClient(); // dev only: canned answers, no network
-  if (!ai) console.log('greenLy: anthropicApiKey not set — health checks and species profiles disabled');
-  const port = Number(process.env.PORT) || config.port || 8080;
+  secret = loadSecret(config);
+  const adminId = ensureAdmin(db, config, secret);
+  if (adminId) console.log(`greenLy: created user "${normalizeLogin(config.adminLogin) || 'admin'}" from config.password and assigned existing plants to it`);
+  if (config.inviteCode) console.log('greenLy: config.inviteCode is set — it works as an unlimited invite next to the codes from the admin panel');
+  if (process.env.GREENLY_FAKE_AI) console.log('greenLy: GREENLY_FAKE_AI — canned analyses for every user');
+  const port = process.env.PORT !== undefined ? Number(process.env.PORT) : (config.port || 8080); // PORT=0 (tests) = any free port
   server.listen(port, () => console.log(`greenLy listening on ${port}`));
 }
 

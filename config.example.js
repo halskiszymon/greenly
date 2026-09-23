@@ -1,7 +1,15 @@
 // Copy to config.js and fill in. config.js is gitignored — never commit it.
 export default {
-  // Single shared password for the app UI. Token = sha256("greenly|" + password).
+  // Password of the first account. On the first start the app creates this user (see adminLogin)
+  // and assigns every existing plant to it. Later password changes happen in the app, not here.
   password: '',
+  // Login of that first account.
+  adminLogin: 'admin',
+  // Code new users must enter to register. Leave empty to disable registration.
+  inviteCode: '',
+  // Secret used to encrypt users' Anthropic keys in the database. Optional: when empty the app
+  // generates one into data/secret.key on first start. Changing it later makes stored keys unreadable.
+  secretKey: '',
 
   // Pl@ntNet API key (my.plantnet.org → Settings). Free tier: 500 requests/day.
   // Leave empty to disable photo identification — manual name entry still works.
@@ -16,12 +24,12 @@ export default {
     privateKey: '',
   },
 
-  // Anthropic API key (console.anthropic.com) for plant health check-ups, "doctor" diagnosis
-  // and species profiles. Pay-per-use, no subscription. Leave empty to hide these features.
+  // Anthropic keys are per user and set in the app (account settings). This one is only copied to
+  // the first account when it is created on the first start; afterwards it is ignored.
   anthropicApiKey: '',
-  // Model for image analysis. Default: Claude Opus 5. Cheaper alternative: 'claude-sonnet-5'.
+  // Defaults for new accounts (each user can change them in the app).
+  // Model: 'claude-opus-5' or the cheaper 'claude-sonnet-5'. Effort: 'low' | 'medium' | 'high'.
   anthropicModel: 'claude-opus-5',
-  // Reasoning effort: 'low' | 'medium' | 'high'. Higher = more thorough and more expensive per analysis.
   anthropicEffort: 'medium',
 
   // Shared secret for triggering the daily reminder over HTTP

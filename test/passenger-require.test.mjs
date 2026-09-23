@@ -14,7 +14,7 @@ test('server.js can be loaded with require() (no top-level await) and starts lis
   fs.writeFileSync(cfg, "export default { password: 'x', timezone: 'UTC' };\n");
   const child = spawn(process.execPath, ['-e', "require(process.argv[1])", path.join(ROOT, 'server.js')], {
     cwd: ROOT,
-    env: { ...process.env, PORT: '0', GREENLY_CONFIG: cfg },
+    env: { ...process.env, PORT: '0', GREENLY_CONFIG: cfg, GREENLY_DATA: dir },
   });
   let out = '';
   const result = await new Promise((resolve) => {
