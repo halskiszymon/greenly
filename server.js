@@ -18,6 +18,7 @@ import {
   normalizeLogin, MIN_PASSWORD, verifyPassword, createUser, getUser, getUserByLogin, setUserPassword, setUserAi,
   createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
   setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
+  setUseGlobalKey, getSetting, setSetting,
 } from './lib.js';
 import { runCron } from './cron.js';
 import { createClient as createAiClient, analyzeHealth, describeSpecies, describeEvent, verifyKey, MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT } from './ai.js';
@@ -105,6 +106,11 @@ function requireAuth(req, url) {
   return user;
 }
 
+function globalInfo() {
+  const g = globalAi();
+  return { has_key: !!g.key, key_hint: g.key ? g.key.slice(-4) : null, model: g.model, effort: g.effort };
+}
+
 function requireAdmin(req, url) {
   const user = requireAuth(req, url);
   if (!user.is_admin) throw new HttpError(403, 'Tylko dla administratora.');
@@ -115,28 +121,57 @@ function str(v, max) {
   return String(v ?? '').trim().slice(0, max);
 }
 
-/** Public account info sent to the client. */
-function userInfo(u) {
-  const key = decryptSecret(secret, u.anthropic_key);
+/** The admin's server-wide key and its model/effort (key decrypted; null when unset). */
+function globalAi() {
   return {
-    login: u.login,
-    is_admin: !!u.is_admin,
-    has_key: !!key || !!process.env.GREENLY_FAKE_AI,
-    key_hint: key ? key.slice(-4) : null,
-    model: u.anthropic_model || DEFAULT_MODEL,
-    effort: u.anthropic_effort || DEFAULT_EFFORT,
+    key: decryptSecret(secret, getSetting(db, 'global_anthropic_key')),
+    model: getSetting(db, 'global_model') || config.anthropicModel || DEFAULT_MODEL,
+    effort: getSetting(db, 'global_effort') || config.anthropicEffort || DEFAULT_EFFORT,
   };
 }
 
-/** Per-user Anthropic client and settings, or null when the user has no key. */
+/** Which key a user runs on: their own, or the global one when the admin assigned it. */
+function resolveAi(u) {
+  if (u.use_global_key) {
+    const g = globalAi();
+    return { key: g.key, model: g.model, effort: g.effort, source: 'global' };
+  }
+  return {
+    key: decryptSecret(secret, u.anthropic_key),
+    model: u.anthropic_model || DEFAULT_MODEL,
+    effort: u.anthropic_effort || DEFAULT_EFFORT,
+    source: 'own',
+  };
+}
+
+/** Public account info sent to the client. */
+function userInfo(u) {
+  const a = resolveAi(u);
+  return {
+    login: u.login,
+    is_admin: !!u.is_admin,
+    has_key: !!a.key || !!process.env.GREENLY_FAKE_AI,
+    key_source: a.source,           // 'global' = assigned by the admin, settings locked
+    key_hint: a.source === 'own' && a.key ? a.key.slice(-4) : null,
+    model: a.model,
+    effort: a.effort,
+  };
+}
+
+/** Anthropic client and settings for a user, or null when there is no usable key. */
 function aiFor(u) {
   if (process.env.GREENLY_FAKE_AI) return { client: fakeAiClient(), settings: {} };
-  const key = decryptSecret(secret, u.anthropic_key);
-  if (!key) return null;
-  return {
-    client: createAiClient({ anthropicApiKey: key }),
-    settings: { anthropicModel: u.anthropic_model || DEFAULT_MODEL, anthropicEffort: u.anthropic_effort || DEFAULT_EFFORT },
-  };
+  const a = resolveAi(u);
+  if (!a.key) return null;
+  return { client: createAiClient({ anthropicApiKey: a.key }), settings: { anthropicModel: a.model, anthropicEffort: a.effort } };
+}
+
+/** Validates a key against Anthropic and returns it encrypted. */
+async function checkedKey(raw) {
+  const key = String(raw).trim();
+  if (!/^sk-ant-[A-Za-z0-9_-]{20,200}$/.test(key)) throw new HttpError(400, 'To nie wygląda na klucz Anthropic (zaczyna się od sk-ant-).');
+  await verifyKey(createAiClient({ anthropicApiKey: key }));
+  return encryptSecret(secret, key);
 }
 
 const NO_KEY = 'Brak klucza Anthropic — dodaj go w ustawieniach konta.';
@@ -217,7 +252,24 @@ const actions = {
   // ---- admin panel ----
   async admin(req, res, url) {
     requireAdmin(req, url);
-    sendJson(res, 200, { users: listUsersAdmin(db), invites: listInvites(db), config_invite: !!config.inviteCode });
+    sendJson(res, 200, { users: listUsersAdmin(db), invites: listInvites(db), config_invite: !!config.inviteCode, global: globalInfo() });
+  },
+
+  // Global Claude key: {anthropic_key?: string|null, model?, effort?}. Users with use_global_key run on it.
+  async adminglobal(req, res, url) {
+    requireAdmin(req, url);
+    const b = await readJson(req);
+    if (b.anthropic_key === null) setSetting(db, 'global_anthropic_key', null);
+    else if (typeof b.anthropic_key === 'string' && b.anthropic_key.trim()) setSetting(db, 'global_anthropic_key', await checkedKey(b.anthropic_key));
+    if (b.model !== undefined) {
+      if (!MODELS.includes(b.model)) throw new HttpError(400, 'Nieznany model.');
+      setSetting(db, 'global_model', b.model);
+    }
+    if (b.effort !== undefined) {
+      if (!EFFORTS.includes(b.effort)) throw new HttpError(400, 'Nieznany poziom analizy.');
+      setSetting(db, 'global_effort', b.effort);
+    }
+    sendJson(res, 200, { global: globalInfo() });
   },
 
   // {id, action: 'delete' | 'password' | 'admin' | 'unadmin', password?}
@@ -244,6 +296,12 @@ const actions = {
         if (id === me.id) throw new HttpError(400, 'Nie możesz odebrać sobie uprawnień.');
         if (countAdmins(db) <= 1) throw new HttpError(400, 'Musi zostać co najmniej jeden administrator.');
         setAdmin(db, id, false);
+        break;
+      case 'global':
+        setUseGlobalKey(db, id, true);
+        break;
+      case 'unglobal':
+        setUseGlobalKey(db, id, false);
         break;
       default:
         throw new HttpError(400, 'Nieznana akcja.');
@@ -285,13 +343,10 @@ const actions = {
     const u = requireAuth(req, url);
     const b = await readJson(req);
     const ai = {};
+    const touchesAi = b.anthropic_key !== undefined || b.model !== undefined || b.effort !== undefined;
+    if (touchesAi && u.use_global_key) throw new HttpError(400, 'Twoje konto korzysta z globalnego klucza Claude — te ustawienia zmienia administrator.');
     if (b.anthropic_key === null) ai.anthropic_key = null;
-    else if (typeof b.anthropic_key === 'string' && b.anthropic_key.trim()) {
-      const key = b.anthropic_key.trim();
-      if (!/^sk-ant-[A-Za-z0-9_-]{20,200}$/.test(key)) throw new HttpError(400, 'To nie wygląda na klucz Anthropic (zaczyna się od sk-ant-).');
-      await verifyKey(createAiClient({ anthropicApiKey: key }));
-      ai.anthropic_key = encryptSecret(secret, key);
-    }
+    else if (typeof b.anthropic_key === 'string' && b.anthropic_key.trim()) ai.anthropic_key = await checkedKey(b.anthropic_key);
     if (b.model !== undefined) {
       if (!MODELS.includes(b.model)) throw new HttpError(400, 'Nieznany model.');
       ai.anthropic_model = b.model;

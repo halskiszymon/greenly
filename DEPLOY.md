@@ -97,6 +97,9 @@ Restart the app after editing `config.js` (it is read once at start).
    (encrypted). Billing is pay-per-use from prepaid credits — no subscription. A check-up or diagnosis costs a few cents;
    the app shows the approximate cost under each analysis.
 3. Users without a key see the AI buttons disabled with a hint pointing to *Konto*.
+4. **Global key:** in the admin panel you can store one key of your own (with its model and effort) and press
+   *Przypisz globalny klucz* next to a user. That user's analyses then run on your key; they cannot set their own and
+   their *Konto* screen says a global key is assigned. *Globalny klucz: wł.* toggles it off again.
 
 ### 4c. Users and invites
 

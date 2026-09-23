@@ -428,7 +428,8 @@ img { display: block; max-width: 100%; }
 .install-head h2 { margin: 0 0 2px; font-size: 20px; font-weight: 600; }
 .install-head p { margin: 0; }
 .install-why { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
-.install-why li { padding: 8px 10px; background: var(--bg); border-radius: 10px; }
+.install-why li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; background: var(--bg); border-radius: 10px; }
+.install-why .ico { flex-shrink: 0; font-size: 18px; line-height: 1.2; }
 .install-platform { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .install-steps { margin: 0 0 14px; padding-left: 22px; font-size: 15px; }
 .install-steps li { margin-bottom: 6px; }
@@ -454,3 +455,9 @@ img { display: block; max-width: 100%; }
 .adm-actions .btn { padding: 6px 10px; min-height: 36px; font-size: 14px; }
 .adm-new .field { margin-bottom: 10px; }
 .adm-new input[type="number"] { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); width: 100%; min-height: 44px; }
+
+/* inline validation */
+.field-error { margin: 0; font-size: 13px; color: var(--alarm); }
+.login .field-error { margin-top: -4px; }
+.field .field-error { margin-top: -2px; }
+input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; box-shadow: 0 0 0 3px var(--alarm-soft); }

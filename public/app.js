@@ -134,6 +134,46 @@ function toast(msg, type = 'info', ms = 3200) {
   setTimeout(() => { t.classList.add('leaving'); setTimeout(() => t.remove(), 260); }, ms);
 }
 
+// ---------------------------------------------------------------------------
+// inline form validation (forms are `novalidate`; the browser's bubbles are never shown)
+// ---------------------------------------------------------------------------
+function fieldError(input, msg) {
+  let err = input.nextElementSibling;
+  if (!err?.classList.contains('field-error')) {
+    err = document.createElement('p');
+    err.className = 'field-error';
+    err.setAttribute('role', 'alert');
+    input.insertAdjacentElement('afterend', err);
+    input.addEventListener('input', () => fieldError(input, null), { once: false });
+  }
+  input.classList.toggle('is-invalid', !!msg);
+  input.setAttribute('aria-invalid', msg ? 'true' : 'false');
+  err.textContent = msg ?? '';
+  err.hidden = !msg;
+}
+
+/** rules: [[input, (value) => message | null], …]. Shows every message, focuses the first. Returns true when clean. */
+function validate(rules) {
+  let first = null;
+  for (const [input, check] of rules) {
+    const msg = check(input.value.trim());
+    fieldError(input, msg);
+    if (msg && !first) first = input;
+  }
+  first?.focus();
+  return !first;
+}
+const required = (msg) => (v) => (v ? null : msg);
+const LOGIN_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/i;
+const loginRule = (v) => (!v ? 'Wpisz login.' : LOGIN_RE.test(v) ? null : '3–32 znaki: litery, cyfry, kropka, myślnik lub podkreślenie.');
+const passwordRule = (v) => (!v ? 'Wpisz hasło.' : v.length < 8 ? 'Hasło musi mieć co najmniej 8 znaków.' : null);
+
+/** Server-side messages that clearly belong to one field land under it instead of a toast. */
+function serverFieldError(msg, map) {
+  for (const [needle, input] of map) if (msg.toLowerCase().includes(needle)) { fieldError(input, msg); input.focus(); return true; }
+  return false;
+}
+
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
@@ -215,14 +255,17 @@ async function startSession({ token, user }, { fresh = false } = {}) {
 
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const user = $('#login-user');
+  const pass = $('#login-password');
+  if (!validate([[user, required('Wpisz login.')], [pass, required('Wpisz hasło.')]])) return;
   const btn = e.target.querySelector('button');
   btn.disabled = true;
   try {
-    const data = await api('login', { json: { login: $('#login-user').value.trim(), password: $('#login-password').value } });
-    $('#login-password').value = '';
+    const data = await api('login', { json: { login: user.value.trim(), password: pass.value } });
+    pass.value = '';
     await startSession(data);
   } catch (err) {
-    toast(err.message, 'error');
+    if (!serverFieldError(err.message, [['hasło', pass]])) toast(err.message, 'error');
   } finally {
     btn.disabled = false;
   }
@@ -230,16 +273,20 @@ $('#login-form').addEventListener('submit', async (e) => {
 
 $('#register-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const user = $('#reg-user');
+  const pass = $('#reg-password');
+  const invite = $('#reg-invite');
+  if (!validate([[user, loginRule], [pass, passwordRule], [invite, required('Wpisz kod zaproszenia.')]])) return;
   const btn = e.target.querySelector('button');
   btn.disabled = true;
   try {
-    const data = await api('register', { json: { login: $('#reg-user').value.trim(), password: $('#reg-password').value, invite: $('#reg-invite').value.trim() } });
-    $('#reg-password').value = '';
-    $('#reg-invite').value = '';
+    const data = await api('register', { json: { login: user.value.trim(), password: pass.value, invite: invite.value.trim() } });
+    pass.value = '';
+    invite.value = '';
     toast(`Witaj, ${data.user.login}!`);
     await startSession(data, { fresh: true });
   } catch (err) {
-    toast(err.message, 'error', 5000);
+    if (!serverFieldError(err.message, [['login', user], ['kod', invite], ['hasło', pass]])) toast(err.message, 'error', 5000);
   } finally {
     btn.disabled = false;
   }
@@ -1560,8 +1607,8 @@ function openInstall({ consent = false } = {}) {
       <h2 id="install-title">Zainstaluj greenLy</h2>
       <p class="muted">Ta strona jest aplikacją — najlepiej działa z ekranu początkowego.</p></div></div>
     <ul class="install-why">
-      <li>🔔 <b>Przypomnienia o podlewaniu</b> przychodzą tylko do zainstalowanej aplikacji${isIOS ? ' (na iPhonie w przeglądarce nie działają wcale)' : ''}.</li>
-      <li>📱 Pełny ekran, własna ikona, działa offline.</li>
+      <li><span class="ico" aria-hidden="true">🔔</span><span><b>Przypomnienia o podlewaniu</b> przychodzą tylko do zainstalowanej aplikacji${isIOS ? ' (na iPhonie w przeglądarce nie działają wcale)' : ''}.</span></li>
+      <li><span class="ico" aria-hidden="true">📱</span><span>Pełny ekran, własna ikona, działa offline.</span></li>
     </ul>
     <p class="install-platform">${esc(platform)}</p>
     <ol class="install-steps">${steps.map((t) => `<li>${t}</li>`).join('')}</ol>
@@ -1615,10 +1662,13 @@ function openAccount() {
 
     <section class="section">
       <h2>Klucz Anthropic (Claude)</h2>
-      <div class="card">
+      ${u.key_source === 'global' ? `<div class="card">
+        <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? 'Na Twoje konto jest przypisany globalny klucz Claude' : 'Administrator przypisał Ci globalny klucz, ale nie jest jeszcze ustawiony — analizy AI są wyłączone'}</p>
+        <p class="muted" style="margin:0">Kontrola, Doktor i opisy gatunków działają na kluczu administratora i nie obciążają Twojego konta Anthropic. Model: <b>${esc(label(MODEL_OPTIONS, u.model))}</b> · dokładność: <b>${esc(label(EFFORT_OPTIONS, u.effort))}</b>. Własnego klucza nie ustawisz — o zmianę poproś administratora.</p>
+      </div>` : `<div class="card">
         <p class="muted" style="margin:0 0 10px">Kontrola, Doktor i opisy gatunków działają na Twoim własnym kluczu i obciążają Twoje konto Anthropic (kilka centów za analizę). Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki.</p>
         <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? `Klucz ustawiony${u.key_hint ? ` · kończy się na …${esc(u.key_hint)}` : ''}` : 'Brak klucza — analizy AI są wyłączone'}</p>
-        <form id="key-form" autocomplete="off">
+        <form id="key-form" autocomplete="off" novalidate>
           <div class="field">
             <label for="acc-key">${u.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API'}</label>
             <input type="password" id="acc-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false">
@@ -1633,14 +1683,14 @@ function openAccount() {
           </div>
         </form>
         <p class="hint" style="margin:10px 0 0">Klucz wygenerujesz na <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (API keys → Create key). Płacisz z góry doładowanymi środkami, bez abonamentu.</p>
-      </div>
+      </div>`}
     </section>
 
     <section class="section">
       <h2>Hasło</h2>
-      <form class="card" id="pass-form">
-        <div class="field"><label for="acc-pass-old">Obecne hasło</label><input type="password" id="acc-pass-old" autocomplete="current-password" required></div>
-        <div class="field"><label for="acc-pass-new">Nowe hasło (min. 8 znaków)</label><input type="password" id="acc-pass-new" autocomplete="new-password" minlength="8" required></div>
+      <form class="card" id="pass-form" novalidate>
+        <div class="field"><label for="acc-pass-old">Obecne hasło</label><input type="password" id="acc-pass-old" autocomplete="current-password"></div>
+        <div class="field"><label for="acc-pass-new">Nowe hasło (min. 8 znaków)</label><input type="password" id="acc-pass-new" autocomplete="new-password"></div>
         <div class="form-actions"><button type="submit" class="btn btn-primary">Zmień hasło</button></div>
       </form>
     </section>
@@ -1663,10 +1713,11 @@ function openAccount() {
     <button type="button" class="btn btn-danger btn-block" id="acc-logout">Wyloguj</button>`;
   $('#acc-admin')?.addEventListener('click', () => openAdmin());
 
-  $('#key-form').addEventListener('submit', async (e) => {
+  $('#key-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const key = $('#acc-key').value.trim();
+    if (!validate([[$('#acc-key'), (v) => (v && !/^sk-ant-/.test(v) ? 'Klucz Anthropic zaczyna się od sk-ant-…' : null)]])) return;
     const payload = { model: $('#acc-model').value, effort: $('#acc-effort').value };
     if (key) payload.anthropic_key = key;
     btn.disabled = true;
@@ -1680,7 +1731,7 @@ function openAccount() {
       openAccount();
       if (state.plantView) showPlant(state.plantView);
     } catch (err) {
-      toast(err.message, 'error', 6000);
+      if (key && /klucz/i.test(err.message)) fieldError($('#acc-key'), err.message); else toast(err.message, 'error', 6000);
       btn.disabled = false;
       btn.textContent = 'Zapisz';
     }
@@ -1699,14 +1750,18 @@ function openAccount() {
   });
   $('#pass-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const oldPw = $('#acc-pass-old');
+    const newPw = $('#acc-pass-new');
+    if (!validate([[oldPw, required('Wpisz obecne hasło.')], [newPw, passwordRule]])) return;
     const btn = e.target.querySelector('button');
     btn.disabled = true;
     try {
-      await api('account', { json: { current_password: $('#acc-pass-old').value, password: $('#acc-pass-new').value } });
+      await api('account', { json: { current_password: oldPw.value, password: newPw.value } });
       toast('Hasło zmienione. Inne urządzenia zostały wylogowane.');
       e.target.reset();
-    } catch (err) { toast(err.message, 'error', 5000); }
-    finally { btn.disabled = false; }
+    } catch (err) {
+      if (!serverFieldError(err.message, [['obecne', oldPw], ['hasło', newPw]])) toast(err.message, 'error', 5000);
+    } finally { btn.disabled = false; }
   });
   $('#acc-install').addEventListener('click', () => { closeSheet(); openInstall(); });
   $('#acc-refresh').addEventListener('click', () => { toast('Odświeżam…'); hardRefresh(); });
@@ -1733,14 +1788,18 @@ async function openAdmin() {
   renderAdmin(data);
 }
 
-function renderAdmin({ users, invites, config_invite }) {
+function renderAdmin({ users, invites, config_invite, global: g }) {
   const me = state.user?.login;
+  const ctx = { users, invites, config_invite, global: g };
+  const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  const keyLabel = (u) => (u.use_global_key ? (g.has_key ? 'globalny' : 'globalny (nieustawiony)') : u.has_key ? 'własny' : 'brak');
   const userRow = (u) => `<li class="adm-row" data-id="${u.id}">
     <div class="adm-main">
       <b>${esc(u.login)}</b>${u.is_admin ? ' <span class="chip soft">admin</span>' : ''}${u.login === me ? ' <span class="muted">(ty)</span>' : ''}
-      <div class="adm-meta">${u.plants} ${u.plants === 1 ? 'roślina' : u.plants >= 2 && u.plants <= 4 ? 'rośliny' : 'roślin'} · klucz AI: ${u.has_key ? 'tak' : 'nie'} · powiadomienia: ${u.subs} · ostatnio: ${fmtAgo(u.last_seen)}${u.invite_code ? ` · kod: ${esc(u.invite_code)}` : ''}</div>
+      <div class="adm-meta">${u.plants} ${u.plants === 1 ? 'roślina' : u.plants >= 2 && u.plants <= 4 ? 'rośliny' : 'roślin'} · klucz AI: ${keyLabel(u)} · powiadomienia: ${u.subs} · ostatnio: ${fmtAgo(u.last_seen)}${u.invite_code ? ` · kod: ${esc(u.invite_code)}` : ''}</div>
     </div>
     <div class="adm-actions">
+      <button type="button" class="btn ${u.use_global_key ? 'btn-soft' : ''}" data-act="${u.use_global_key ? 'unglobal' : 'global'}">${u.use_global_key ? 'Globalny klucz: wł.' : 'Przypisz globalny klucz'}</button>
       <button type="button" class="btn" data-act="password">Hasło</button>
       ${u.login === me ? '' : `<button type="button" class="btn" data-act="${u.is_admin ? 'unadmin' : 'admin'}">${u.is_admin ? 'Odbierz admina' : 'Nadaj admina'}</button>
       <button type="button" class="btn btn-danger" data-act="delete">Usuń</button>`}
@@ -1760,6 +1819,22 @@ function renderAdmin({ users, invites, config_invite }) {
 
   el.sheetBody.innerHTML = `
     <section class="section">
+      <h2>Globalny klucz Claude</h2>
+      <form class="card" id="adm-global-form" autocomplete="off" novalidate>
+        <p class="muted" style="margin:0 0 10px">Jeden klucz dla wybranych użytkowników: analizy idą na Twoje konto Anthropic. Komu go przypiszesz (przycisk przy użytkowniku), ten nie może ustawić własnego klucza i widzi informację, że korzysta z globalnego.</p>
+        <p class="key-status ${g.has_key ? 'on' : ''}">${g.has_key ? `Klucz ustawiony · kończy się na …${esc(g.key_hint ?? '')}` : 'Brak globalnego klucza'}</p>
+        <div class="field"><label for="adm-key">${g.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API'}</label><input type="password" id="adm-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false"></div>
+        <div class="field-row">
+          <div class="field"><label for="adm-model">Model</label><select id="adm-model">${options(MODEL_OPTIONS, g.model)}</select></div>
+          <div class="field"><label for="adm-effort">Dokładność</label><select id="adm-effort">${options(EFFORT_OPTIONS, g.effort)}</select></div>
+        </div>
+        <div class="form-actions">
+          ${g.has_key ? '<button type="button" class="btn btn-danger" id="adm-key-remove">Usuń klucz</button>' : ''}
+          <button type="submit" class="btn btn-primary">Zapisz</button>
+        </div>
+      </form>
+    </section>
+    <section class="section">
       <h2>Kody zaproszeń</h2>
       <form class="card adm-new" id="adm-invite-form">
         <div class="field-row">
@@ -1778,12 +1853,41 @@ function renderAdmin({ users, invites, config_invite }) {
     <button type="button" class="btn btn-block" id="adm-back">Wróć do konta</button>`;
 
   $('#adm-back').addEventListener('click', () => openAccount());
+  $('#adm-global-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const keyEl = $('#adm-key');
+    const key = keyEl.value.trim();
+    if (!validate([[keyEl, (v) => (v && !/^sk-ant-/.test(v) ? 'Klucz Anthropic zaczyna się od sk-ant-…' : null)]])) return;
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    btn.textContent = key ? 'Sprawdzam klucz…' : 'Zapisuję…';
+    const payload = { model: $('#adm-model').value, effort: $('#adm-effort').value };
+    if (key) payload.anthropic_key = key;
+    try {
+      const { global: ng } = await api('adminglobal', { json: payload });
+      toast(key ? 'Globalny klucz działa.' : 'Zapisano.');
+      renderAdmin({ ...ctx, global: ng });
+      if (state.user?.key_source === 'global') refresh();
+    } catch (err) {
+      if (key && /klucz/i.test(err.message)) fieldError(keyEl, err.message); else toast(err.message, 'error', 6000);
+      btn.disabled = false;
+      btn.textContent = 'Zapisz';
+    }
+  });
+  $('#adm-key-remove')?.addEventListener('click', async () => {
+    if (!confirm('Usunąć globalny klucz? Użytkownicy, którym jest przypisany, stracą analizy AI.')) return;
+    try {
+      const { global: ng } = await api('adminglobal', { json: { anthropic_key: null } });
+      toast('Globalny klucz usunięty.');
+      renderAdmin({ ...ctx, global: ng });
+    } catch (err) { toast(err.message, 'error'); }
+  });
   $('#adm-invite-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const { invites: list, code } = await api('admininvite', { json: { action: 'create', note: $('#adm-note').value, max_uses: Number($('#adm-uses').value) } });
       toast(`Kod: ${code}`);
-      renderAdmin({ users, invites: list, config_invite });
+      renderAdmin({ ...ctx, invites: list });
     } catch (err) { toast(err.message, 'error'); }
   });
   $('#adm-invites').addEventListener('click', async (e) => {
@@ -1798,7 +1902,7 @@ function renderAdmin({ users, invites, config_invite }) {
     if (act === 'delete' && !confirm(`Usunąć kod ${code}?`)) return;
     try {
       const { invites: list } = await api('admininvite', { json: { action: act, code } });
-      renderAdmin({ users, invites: list, config_invite });
+      renderAdmin({ ...ctx, invites: list });
     } catch (err) { toast(err.message, 'error'); }
   });
   $('#adm-users').addEventListener('click', async (e) => {
@@ -1818,7 +1922,8 @@ function renderAdmin({ users, invites, config_invite }) {
     try {
       const { users: list } = await api('adminuser', { json: payload });
       toast(act === 'password' ? 'Hasło zmienione.' : act === 'delete' ? 'Konto usunięte.' : 'Zapisano.');
-      renderAdmin({ users: list, invites, config_invite });
+      renderAdmin({ ...ctx, users: list });
+      if (login === me) refresh();
     } catch (err) { toast(err.message, 'error', 5000); }
   });
 }

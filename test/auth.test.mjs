@@ -11,6 +11,7 @@ import {
   hashPassword, verifyPassword, normalizeLogin, createUser, getUser, getUserByLogin, countUsers, setUserAi, setUserPassword,
   createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
   setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
+  setUseGlobalKey, getSetting, setSetting,
 } from '../lib.js';
 
 loadCare();
@@ -188,4 +189,19 @@ test('admin listing and deleting a user removes their plants, subs and sessions'
   assert.equal(sessionUser(db, t), null);
   assert.equal(countUsers(db), 1);
   assert.ok(getUser(db, admin));
+});
+
+test('settings and the global-key flag', () => {
+  const db = openDb(tmp());
+  assert.equal(getSetting(db, 'global_model'), null);
+  setSetting(db, 'global_model', 'claude-sonnet-5');
+  setSetting(db, 'global_model', 'claude-opus-5'); // upsert
+  assert.equal(getSetting(db, 'global_model'), 'claude-opus-5');
+  setSetting(db, 'global_model', null);
+  assert.equal(getSetting(db, 'global_model'), null);
+  const id = createUser(db, { login: 'ola', password: 'password123' });
+  assert.equal(listUsersAdmin(db)[0].use_global_key, false);
+  setUseGlobalKey(db, id, true);
+  assert.equal(getUser(db, id).use_global_key, 1);
+  assert.equal(listUsersAdmin(db)[0].use_global_key, true);
 });

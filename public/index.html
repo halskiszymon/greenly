@@ -30,22 +30,22 @@
       <button type="button" role="tab" class="auth-tab active" data-tab="login" aria-selected="true">Logowanie</button>
       <button type="button" role="tab" class="auth-tab" data-tab="register" aria-selected="false">Rejestracja</button>
     </div>
-    <form id="login-form">
+    <form id="login-form" novalidate>
       <h1>Zaloguj się</h1>
       <label for="login-user">Login</label>
-      <input id="login-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <input id="login-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false">
       <label for="login-password">Hasło</label>
-      <input id="login-password" type="password" name="password" autocomplete="current-password" required>
+      <input id="login-password" type="password" name="password" autocomplete="current-password">
       <button type="submit" class="btn btn-primary">Wejdź</button>
     </form>
-    <form id="register-form" hidden>
+    <form id="register-form" novalidate hidden>
       <h1>Załóż konto</h1>
       <label for="reg-user">Login</label>
-      <input id="reg-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{2,31}" required>
-      <label for="reg-password">Hasło (min. 8 znaków)</label>
-      <input id="reg-password" type="password" name="password" autocomplete="new-password" minlength="8" required>
+      <input id="reg-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32">
+      <label for="reg-password">Hasło</label>
+      <input id="reg-password" type="password" name="password" autocomplete="new-password">
       <label for="reg-invite">Kod zaproszenia</label>
-      <input id="reg-invite" type="text" name="invite" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      <input id="reg-invite" type="text" name="invite" autocomplete="off" autocapitalize="none" spellcheck="false">
       <button type="submit" class="btn btn-primary">Załóż konto</button>
       <p class="auth-hint">Każde konto ma własne rośliny i własny klucz Claude do analiz. Kod zaproszenia dostaniesz od osoby, która prowadzi tę instancję.</p>
     </form>

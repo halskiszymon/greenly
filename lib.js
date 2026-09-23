@@ -231,6 +231,10 @@ export function openDb(file = DB_FILE) {
       last_seen   TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+    CREATE TABLE IF NOT EXISTS settings (
+      key    TEXT PRIMARY KEY,
+      value  TEXT
+    );
     CREATE TABLE IF NOT EXISTS invites (
       code        TEXT PRIMARY KEY,
       note        TEXT NOT NULL DEFAULT '',
@@ -248,6 +252,7 @@ export function openDb(file = DB_FILE) {
   ensureColumn(db, 'subs', 'user_id', 'INTEGER');
   ensureColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'invite_code', 'TEXT');
+  ensureColumn(db, 'users', 'use_global_key', 'INTEGER NOT NULL DEFAULT 0');
   db.exec(`
     CREATE INDEX IF NOT EXISTS plants_user ON plants(user_id);
     CREATE INDEX IF NOT EXISTS subs_user ON subs(user_id);
@@ -572,6 +577,20 @@ export function createUser(db, { login, password, anthropic_key = null, anthropi
   return Number(r.lastInsertRowid);
 }
 
+export function setUseGlobalKey(db, id, on) {
+  db.prepare('UPDATE users SET use_global_key = ? WHERE id = ?').run(on ? 1 : 0, id);
+}
+
+// Server-wide settings (admin panel): the global Anthropic key and its model/effort.
+export function getSetting(db, key) {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+}
+
+export function setSetting(db, key, value) {
+  if (value === null || value === undefined) db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+  else db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(value));
+}
+
 export function setAdmin(db, id, isAdmin) {
   db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
 }
@@ -583,13 +602,13 @@ export function countAdmins(db) {
 /** Everything the admin panel lists: no secrets, just counts and activity. */
 export function listUsersAdmin(db) {
   return db.prepare(`
-    SELECT u.id, u.login, u.is_admin, u.invite_code, u.created_at,
+    SELECT u.id, u.login, u.is_admin, u.invite_code, u.use_global_key, u.created_at,
            (u.anthropic_key IS NOT NULL) AS has_key,
            (SELECT COUNT(*) FROM plants p WHERE p.user_id = u.id) AS plants,
            (SELECT COUNT(*) FROM subs s WHERE s.user_id = u.id) AS subs,
            (SELECT MAX(last_seen) FROM sessions s WHERE s.user_id = u.id) AS last_seen
     FROM users u ORDER BY u.id
-  `).all().map((r) => ({ ...r, is_admin: !!r.is_admin, has_key: !!r.has_key }));
+  `).all().map((r) => ({ ...r, is_admin: !!r.is_admin, has_key: !!r.has_key, use_global_key: !!r.use_global_key }));
 }
 
 /** Removes the user with all their plants (and photo files), subscriptions and sessions. */

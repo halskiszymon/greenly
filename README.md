@@ -95,9 +95,10 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 | POST | `login` | `{login, password}` → `{token, user}`; scrypt verify, 400 ms delay on failure. `{password}` alone means `config.adminLogin` (old cached clients) |
 | POST | `register` | `{login, password, invite}` → `{token, user}`; login `[a-z0-9][a-z0-9._-]{2,31}`, password ≥ 8; `invite` = a panel code with uses left or `config.inviteCode` |
 | POST | `logout` | drops the session |
-| POST | `account` | `{anthropic_key?, model?, effort?, password?, current_password?}` → `{user}`; a key is verified against Anthropic (`models.list`) before it is stored encrypted, `null` removes it; a password change logs out other devices |
+| POST | `account` | `{anthropic_key?, model?, effort?, password?, current_password?}` → `{user}`; a key is verified against Anthropic (`models.list`) before it is stored encrypted, `null` removes it; a password change logs out other devices. AI fields are rejected (400) for users on the global key |
 | GET | `admin` | admin only: `{users:[{id, login, is_admin, plants, subs, has_key, last_seen, invite_code}], invites:[…], config_invite}` |
-| POST | `adminuser` | admin only: `{id, action: delete\|password\|admin\|unadmin, password?}`; deleting a user removes their plants and photos; the last admin cannot be demoted |
+| POST | `adminuser` | admin only: `{id, action: delete\|password\|admin\|unadmin\|global\|unglobal, password?}`; deleting a user removes their plants and photos; the last admin cannot be demoted; `global` puts the user on the admin's key |
+| POST | `adminglobal` | admin only: `{anthropic_key?: string\|null, model?, effort?}` → `{global}`; the server-wide Claude key (verified, encrypted in `settings`) used by every user with `use_global_key` |
 | POST | `admininvite` | admin only: `{action: create\|disable\|enable\|delete, code?, note?, max_uses?}` → `{invites, code}` |
 | GET | `plants` | `{plants:[…], today, ai, user}`; each plant carries `interval`, `next_due`, `days_left`, `group_label`, `group_note`, `match_level`; `ai` = this user has a key |
 | POST | `identify` | multipart, field `image` (jpeg/png/webp, ≤ 8 MB) → top 5 `{score, species, genus, family, common[], profile}`; 404 = not recognized, 429 = daily quota, 503 = no key configured |
@@ -123,6 +124,8 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
   anthropic_effort, is_admin, invite_code, created_at
 - `sessions` — token (PK, 64 hex), user_id, created_at, last_seen (bumped hourly; rows idle for a year are pruned on start)
 - `invites` — code (PK), note, max_uses, uses, disabled, created_by, created_at
+- `settings` — key (PK), value: `global_anthropic_key` (encrypted), `global_model`, `global_effort`
+- `users.use_global_key` — 1 = analyses run on the global key with its model/effort; the user's own key settings are locked and the account screen says so
 - `plants` — id, user_id, name, species, common, genus, family, group_key, base_summer, base_winter, pot_cm,
   pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
 - `waterings` — id, plant_id, ts. Every `last_watered` has a matching row: `save` adds one for a manually entered date, and `openDb()` backfills legacy plants without history.
