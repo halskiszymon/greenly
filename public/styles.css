@@ -594,3 +594,5 @@ input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; b
 .xsel-opt.is-selected { color: var(--water-ink); font-weight: 600; }
 .xsel-opt.is-selected::before { content: ''; position: absolute; left: 13px; top: 13px; width: 6px; height: 11px; border-right: 2px solid var(--water-ink); border-bottom: 2px solid var(--water-ink); transform: rotate(45deg); }
 @media (prefers-reduced-motion: reduce) { .xsel-list, .xsel-chev, .xsel-btn { transition: none; } .xsel-list.open .xsel-opt { animation: none; } }
+
+.pv-ml .learned { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--water-soft); color: var(--water-ink); font-size: 12px; font-weight: 600; cursor: help; }

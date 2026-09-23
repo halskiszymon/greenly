@@ -3,7 +3,7 @@
 // Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
 // (test/version.test.mjs checks they match). The server reads this constant from the file and
 // the running app compares it with /api/version to offer a reload after a deploy.
-export const APP_VERSION = '9';
+export const APP_VERSION = '10';
 
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';
@@ -57,14 +57,15 @@ function seasonFactor(when = new Date()) {
   return (1 - Math.cos(2 * Math.PI * dayOfYear(when) / 365)) / 2;
 }
 
-export function estimate({ base_summer, base_winter, pot_cm, pot_material, light, dry_air }, when = new Date()) {
+export function estimate({ base_summer, base_winter, pot_cm, pot_material, light, dry_air, interval_adjust }, when = new Date()) {
   const s = seasonFactor(when);
   const base = base_winter + (base_summer - base_winter) * s;
   const days = base
     * potFactor(pot_cm)
     * (MATERIAL_FACTOR[pot_material] ?? 1)
     * (LIGHT_FACTOR[light] ?? 1)
-    * (dry_air ? DRY_AIR_FACTOR : 1);
+    * (dry_air ? DRY_AIR_FACTOR : 1)
+    * (Number(interval_adjust) || 1);
   return Math.min(MAX_DAYS, Math.max(MIN_DAYS, Math.round(days)));
 }
 
@@ -861,6 +862,7 @@ function openForm(ctx) {
       pot_material: form.pot_material.value,
       light: form.light.value,
       dry_air: form.dry_air.checked,
+      interval_adjust: v.interval_adjust,
     });
     $('#preview-days').textContent = `co ${days} ${dni(days)}`;
     $('#pot-value').textContent = form.pot_cm.value;
@@ -1097,7 +1099,10 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
       <button type="button" class="btn btn-water" id="pv-water">Podlej</button>
     </div>
     <p class="pv-ml">
-      <span>Na raz ok. <b>${p.water_ml} ml</b> — aż woda pokaże się w podstawce, nadmiar wylej.</span>
+      <span>${p.water_mode === 'soak'
+        ? 'Zamiast porcji: <b>zanurz doniczkę</b> w letniej wodzie na 10–15 min, potem odsącz.'
+        : `Na raz ok. <b>${p.water_ml} ml</b> — aż woda pokaże się w podstawce, nadmiar wylej.`}${p.ml_adjust < 1 || p.interval_adjust > 1
+        ? ` <span class="learned" title="Nauczone z „Nadal mokro”: porcja ×${p.ml_adjust}, interwał ×${p.interval_adjust}">↓ dopasowane</span>` : ''}</span>
       <button type="button" class="btn btn-wet" id="pv-wet" ${isDue(p) ? '' : 'hidden'}>Nadal mokro</button>
     </p>
     <div class="pv-actions">
@@ -1228,23 +1233,25 @@ function openSnooze(p) {
     <div class="preview" style="margin-bottom:14px">
       <strong>Nie podlewaj</strong>
       dopóki 2–3 cm podłoża pod powierzchnią nie przeschną. Sprawdź palcem albo patyczkiem.
-      <div class="note">Plan zakłada ok. <b>${p.water_ml} ml</b> na raz przy tej doniczce. Jeśli ziemia jest mokra po tylu dniach, przy następnym podlaniu wlej mniej albo sprawdź, czy w osłonce nie stoi woda.</div>
+      <div class="note">${p.water_mode === 'soak' ? 'Storczyk: moczysz doniczkę zamiast lać porcję, więc' : `Plan zakłada ok. <b>${p.water_ml} ml</b> na raz przy tej doniczce. Jeśli ziemia jest mokra po tylu dniach,`} przy następnym podlaniu ${p.water_mode === 'soak' ? 'skróć moczenie' : 'wlej mniej'} albo sprawdź, czy w osłonce nie stoi woda.</div>
     </div>
     <p class="muted" style="margin:0 0 8px">Przypomnę ponownie za:</p>
     <div class="snooze-grid">
       ${[1, 2, 3, 5].map((d) => `<button type="button" class="btn ${d === 2 ? 'btn-soft' : ''}" data-days="${d}">${d} ${dni(d)}</button>`).join('')}
     </div>
     <div class="field" style="margin-top:14px"><label for="snooze-note">Notatka (opcjonalnie)</label><input type="text" id="snooze-note" maxlength="200" placeholder="np. osłonka była pełna wody"></div>
-    <p class="hint">Odłożenie trafia do historii. Jeśli powtarza się co podlanie, zmień w edycji doniczkę na „bez odpływu” albo światło na ciemniejsze — interwał się wydłuży.</p>`;
+    <p class="hint">Odłożenie trafia do historii. Gdy powtórzy się w tym samym cyklu albo dwa cykle z rzędu, greenLy sam zmniejszy porcję o 15 % i wydłuży interwał o 10 % dla tej rośliny; trzy spokojne cykle przywracają normę.${p.ml_adjust < 1 || p.interval_adjust > 1 ? ` Teraz: porcja ×${p.ml_adjust}, interwał ×${p.interval_adjust}.` : ''}</p>`;
   for (const b of el.sheetBody.querySelectorAll('.snooze-grid .btn')) {
     b.addEventListener('click', async () => {
       const days = Number(b.dataset.days);
       for (const x of el.sheetBody.querySelectorAll('.snooze-grid .btn')) x.disabled = true;
       try {
-        const { plant } = await api('postpone', { json: { id: p.id, days, note: $('#snooze-note').value.trim() } });
+        const { plant, learned } = await api('postpone', { json: { id: p.id, days, note: $('#snooze-note').value.trim() } });
         const i = state.plants.findIndex((x) => x.id === p.id);
         if (i >= 0) state.plants[i] = plant;
-        toast(`Przypomnę za ${days} ${dni(days)}.`);
+        toast(learned
+          ? `Przypomnę za ${days} ${dni(days)}. Ta roślina dostaje mniej: ${plant.water_mode === 'soak' ? 'krótsze moczenie' : `ok. ${plant.water_ml} ml`}, co ${plant.interval} ${dni(plant.interval)}.`
+          : `Przypomnę za ${days} ${dni(days)}.`, 'info', learned ? 6000 : 3200);
         closeSheet();
         state.plants.sort(sortPlants);
         renderList();
@@ -1536,7 +1543,7 @@ function eventDetail(e) {
   if (e.type === 'split') bits.push(d.role === 'child'
     ? `odłączona od <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`
     : `oddzielono <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`);
-  if (e.type === 'snooze') bits.push(`nadal mokro · o ${d.days} ${dni(d.days)}${d.until ? ` (do ${fmtDate(d.until)})` : ''}`);
+  if (e.type === 'snooze') bits.push(`nadal mokro · o ${d.days} ${dni(d.days)}${d.until ? ` (do ${fmtDate(d.until)})` : ''}${d.adjusted ? ' · porcja −15 %, interwał +10 %' : ''}`);
   if (d.watered) bits.push('podlana przy okazji');
   if (e.note) bits.push(esc(e.note));
   return bits.join(' · ');

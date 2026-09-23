@@ -8,7 +8,8 @@
       "light": "Jasne rozproszone światło; bezpośrednie słońce parzy liście.",
       "humidity": "Lubi 50–70%; przy suchym powietrzu zraszaj albo postaw na tacce z keramzytem.",
       "temp": "18–27 °C, nie poniżej 15 °C, bez przeciągów.",
-      "placement": "1–2 m od okna wschodniego lub zachodniego, z dala od grzejnika."
+      "placement": "1–2 m od okna wschodniego lub zachodniego, z dala od grzejnika.",
+      "ml": 0.11
     },
     "succulent": {
       "label": "Sukulenty",
@@ -18,7 +19,8 @@
       "light": "Dużo światła — parapet południowy lub zachodni.",
       "humidity": "Suche powietrze nie przeszkadza.",
       "temp": "Lato 20–30 °C, zimą chłodniej (10–15 °C) i wtedy niemal bez podlewania.",
-      "placement": "Najjaśniejszy parapet w domu; zimą chłodne, jasne miejsce."
+      "placement": "Najjaśniejszy parapet w domu; zimą chłodne, jasne miejsce.",
+      "ml": 0.06
     },
     "cactus": {
       "label": "Kaktusy",
@@ -28,7 +30,8 @@
       "light": "Pełne słońce.",
       "humidity": "Suche powietrze; nie zraszać.",
       "temp": "Lato ciepło, zima 8–15 °C i sucho — to warunek kwitnienia.",
-      "placement": "Parapet południowy; zimą chłodno i jasno."
+      "placement": "Parapet południowy; zimą chłodno i jasno.",
+      "ml": 0.05
     },
     "fern": {
       "label": "Paprocie",
@@ -38,7 +41,8 @@
       "light": "Półcień, rozproszone światło; słońce wypala liście.",
       "humidity": "Wysoka, 60%+; jasna łazienka to ideał.",
       "temp": "18–24 °C, stabilnie.",
-      "placement": "Jasna łazienka albo głębsza część jasnego pokoju, z dala od grzejnika."
+      "placement": "Jasna łazienka albo głębsza część jasnego pokoju, z dala od grzejnika.",
+      "ml": 0.13
     },
     "marantaceae": {
       "label": "Marantowate",
@@ -48,7 +52,8 @@
       "light": "Rozproszone światło; w słońcu liście blakną i zwijają się.",
       "humidity": "Wysoka, 60%+; przy suchym powietrzu brązowieją brzegi liści.",
       "temp": "18–26 °C; wrażliwe na przeciągi i zimno.",
-      "placement": "Kilka metrów od okna, z dala od grzejnika; dobrze czują się w grupie roślin."
+      "placement": "Kilka metrów od okna, z dala od grzejnika; dobrze czują się w grupie roślin.",
+      "ml": 0.12
     },
     "ficus": {
       "label": "Fikusy",
@@ -58,7 +63,8 @@
       "light": "Jasno; odrobina porannego słońca nie zaszkodzi.",
       "humidity": "Średnia; co jakiś czas przetrzyj liście z kurzu.",
       "temp": "16–26 °C; nie lubi przeciągów i nagłych zmian.",
-      "placement": "Stałe jasne miejsce przy oknie E/W — i nie przestawiaj."
+      "placement": "Stałe jasne miejsce przy oknie E/W — i nie przestawiaj.",
+      "ml": 0.1
     },
     "palm": {
       "label": "Palmy",
@@ -68,7 +74,8 @@
       "light": "Jasne rozproszone; młode liście parzą się w pełnym słońcu.",
       "humidity": "Średnia do wysokiej; zraszaj w sezonie grzewczym.",
       "temp": "18–24 °C, zimą nie poniżej 15 °C.",
-      "placement": "Blisko jasnego okna, ale bez słońca w południe."
+      "placement": "Blisko jasnego okna, ale bez słońca w południe.",
+      "ml": 0.1
     },
     "orchid": {
       "label": "Storczyki",
@@ -78,7 +85,9 @@
       "light": "Jasne rozproszone; parapet wschodni jest idealny.",
       "humidity": "50–70%; nie zostawiaj wody w sercu rośliny.",
       "temp": "18–25 °C; do zawiązania pąków przydają się noce chłodniejsze o kilka stopni.",
-      "placement": "Parapet wschodni lub północny, w przezroczystej doniczce."
+      "placement": "Parapet wschodni lub północny, w przezroczystej doniczce.",
+      "ml": 0.1,
+      "ml_mode": "soak"
     },
     "compact": {
       "label": "Zwarte (zamiokulkas, sansewieria)",
@@ -88,7 +97,8 @@
       "light": "Od jasnego po półcień — bardzo tolerancyjne.",
       "humidity": "Bez wymagań.",
       "temp": "15–28 °C.",
-      "placement": "Praktycznie wszędzie poza pełnym słońcem; sprawdzają się w biurach i przedpokojach."
+      "placement": "Praktycznie wszędzie poza pełnym słońcem; sprawdzają się w biurach i przedpokojach.",
+      "ml": 0.08
     },
     "citrus": {
       "label": "Cytrusy",
@@ -98,7 +108,8 @@
       "light": "Pełne słońce, minimum 5–6 h dziennie.",
       "humidity": "Średnia; zimą przy grzejniku zraszaj.",
       "temp": "Latem na balkon; zimą 5–12 °C i jasno.",
-      "placement": "Latem balkon lub taras, zimą chłodne, jasne pomieszczenie."
+      "placement": "Latem balkon lub taras, zimą chłodne, jasne pomieszczenie.",
+      "ml": 0.11
     },
     "herb": {
       "label": "Zioła",
@@ -108,7 +119,8 @@
       "light": "Pełne słońce, parapet południowy.",
       "humidity": "Bez wymagań; zapewnij przewiew.",
       "temp": "18–25 °C.",
-      "placement": "Najjaśniejszy parapet w kuchni, latem balkon."
+      "placement": "Najjaśniejszy parapet w kuchni, latem balkon.",
+      "ml": 0.13
     },
     "flowering": {
       "label": "Kwitnące",
@@ -118,7 +130,8 @@
       "light": "Jasno, poranne słońce; w pełnym południowym słońcu kwiaty szybko przekwitają.",
       "humidity": "Średnia.",
       "temp": "16–22 °C; chłodniej = dłuższe kwitnienie.",
-      "placement": "Parapet wschodni; cyklameny i azalie wolą chłodne pokoje."
+      "placement": "Parapet wschodni; cyklameny i azalie wolą chłodne pokoje.",
+      "ml": 0.11
     },
     "begonia": {
       "label": "Begonie",
@@ -128,7 +141,8 @@
       "light": "Jasne rozproszone, bez ostrego słońca.",
       "humidity": "Wysoka, ale nie zraszaj liści.",
       "temp": "18–24 °C.",
-      "placement": "Blisko okna wschodniego, z dala od grzejnika i przeciągów."
+      "placement": "Blisko okna wschodniego, z dala od grzejnika i przeciągów.",
+      "ml": 0.1
     },
     "universal": {
       "label": "Profil uniwersalny",
@@ -138,7 +152,8 @@
       "light": "Jasne rozproszone światło to bezpieczny wybór dla większości roślin.",
       "humidity": "Średnia; większość roślin lubi więcej wilgoci, niż daje ogrzewane mieszkanie.",
       "temp": "18–24 °C.",
-      "placement": "1–2 m od jasnego okna, z dala od grzejnika i przeciągów."
+      "placement": "1–2 m od jasnego okna, z dala od grzejnika i przeciągów.",
+      "ml": 0.1
     }
   },
   "species": {

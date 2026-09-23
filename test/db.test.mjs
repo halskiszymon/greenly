@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openDb, loadCare, insertPlant, insertCheck, snoozePlant, wateringMl, decoratePlant, getPlant, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings, insertEvent, listEvents, getEvent, deleteEvent, EVENT_TYPES } from '../lib.js';
+import { openDb, loadCare, insertPlant, insertCheck, snoozePlant, wateringMl, wateringMode, decoratePlant, getPlant, learnFromSnooze, learnFromWatering, snoozeCycles, intervalDays, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings, insertEvent, listEvents, getEvent, deleteEvent, EVENT_TYPES } from '../lib.js';
 
 loadCare();
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'greenly-db-')), 'test.sqlite');
@@ -108,4 +108,44 @@ test('still wet: snooze pushes next_due, watering clears it; water_ml scales wit
   assert.equal(wateringMl({ pot_cm: 15, group_key: 'aroid' }), 290);
   assert.ok(wateringMl({ pot_cm: 15, group_key: 'cactus' }) < wateringMl({ pot_cm: 15, group_key: 'fern' }));
   assert.ok(wateringMl({ pot_cm: 30, group_key: 'universal' }) > wateringMl({ pot_cm: 15, group_key: 'universal' }));
+  // pot and placement corrections: terracotta in the sun needs more, a cachepot in a dark corner less
+  const base = wateringMl({ pot_cm: 15, group_key: 'aroid', pot_material: 'ceramic', light: 'bright' });
+  assert.ok(wateringMl({ pot_cm: 15, group_key: 'aroid', pot_material: 'terracotta', light: 'sun', dry_air: 1 }) > base);
+  assert.ok(wateringMl({ pot_cm: 15, group_key: 'aroid', pot_material: 'cachepot', light: 'dark' }) < base);
+  assert.equal(wateringMl({ pot_cm: 15, group_key: 'aroid', ml_adjust: 0.5 }), 150);
+  assert.equal(wateringMode('orchid'), 'soak');
+  assert.equal(wateringMode('aroid'), 'pour');
+});
+
+test('learning: repeated "still wet" shrinks the portion and stretches the interval, calm cycles restore them', () => {
+  const db = openDb(tmp());
+  const id = insertPlant(db, { ...basePlant, last_watered: '2026-06-01' });
+  const water = (d) => waterPlant(db, id, d);
+  const snooze = (ts) => insertEvent(db, { plant_id: id, type: 'snooze', ts, data: { days: 2 } });
+  water('2026-06-01');
+  snooze('2026-06-10T10:00:00.000Z');
+  assert.equal(learnFromSnooze(db, id), null); // one snooze in a cycle is normal
+  snooze('2026-06-12T10:00:00.000Z');
+  const l1 = learnFromSnooze(db, id);            // second in the same cycle → tighten
+  assert.deepEqual(l1, { ml_adjust: 0.85, interval_adjust: 1.1 });
+  assert.ok(getEvent(db, db.prepare("SELECT id FROM events WHERE plant_id = ? AND ts = ?").get(id, '2026-06-12T10:00:00.000Z').id).data.adjusted);
+  snooze('2026-06-14T10:00:00.000Z');
+  assert.equal(learnFromSnooze(db, id), null); // at most once per cycle
+  const p = getPlant(db, id);
+  assert.ok(intervalDays({ ...p }) > intervalDays({ ...p, interval_adjust: 1 }));
+  assert.equal(decoratePlant(p).ml_adjust, 0.85);
+  // previous cycle + this cycle each with one snooze also counts
+  water('2026-06-20');
+  snooze('2026-06-28T10:00:00.000Z');
+  assert.deepEqual(learnFromSnooze(db, id), { ml_adjust: 0.72, interval_adjust: 1.21 });
+  assert.deepEqual(snoozeCycles(db, id, 2).map((c) => c.snoozes), [1, 3]);
+  // three completed calm cycles → relax one step
+  water('2026-07-01'); assert.equal(learnFromWatering(db, id), null);
+  water('2026-07-11'); assert.equal(learnFromWatering(db, id), null);
+  water('2026-07-21'); assert.equal(learnFromWatering(db, id), null); // cycles: 07-11→07-21, 07-01→07-11, 06-20→07-01 (has a snooze)
+  water('2026-07-31');
+  assert.deepEqual(learnFromWatering(db, id), { ml_adjust: 0.85, interval_adjust: 1.1 });
+  water('2026-08-10');
+  assert.deepEqual(learnFromWatering(db, id), { ml_adjust: 1, interval_adjust: 1 });
+  assert.equal(learnFromWatering(db, id), null); // nothing left to relax
 });

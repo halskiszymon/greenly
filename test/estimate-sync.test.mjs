@@ -17,8 +17,8 @@ test('estimate() in app.js matches intervalDays() in lib.js on a grid of inputs'
   const bases = [[3, 5], [8, 13], [18, 45]];
   let checked = 0;
   for (const when of dates) for (const [s, w] of bases) for (const pot_cm of [8, 12, 18, 26, 36])
-    for (const pot_material of Object.keys(MATERIAL_FACTOR)) for (const light of Object.keys(LIGHT_FACTOR)) for (const dry_air of [0, 1]) {
-      const p = { base_summer: s, base_winter: w, pot_cm, pot_material, light, dry_air };
+    for (const pot_material of Object.keys(MATERIAL_FACTOR)) for (const light of Object.keys(LIGHT_FACTOR)) for (const dry_air of [0, 1]) for (const interval_adjust of [undefined, 1.21]) {
+      const p = { base_summer: s, base_winter: w, pot_cm, pot_material, light, dry_air, interval_adjust };
       assert.equal(estimate(p, when), intervalDays(p, when), JSON.stringify({ ...p, when }));
       checked++;
     }

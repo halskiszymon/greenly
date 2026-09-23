@@ -70,8 +70,15 @@ for the live preview in the form; `test/estimate-sync.test.mjs` fails if the two
 Dates are handled at day granularity in the configured timezone: `days_left = interval − daysSince(last_watered)`.
 A "still wet" snooze (`plants.snoozed_until`) overrides `next_due` when it is later; the API marks such plants `snoozed`.
 
-`water_ml` is a hint per watering: ~10 % of the pot volume (cylinder with height = diameter), 5–8 % for cacti,
-succulents and compact plants, 11–13 % for aroids, marantas and ferns, rounded to 10 ml (`lib.js#wateringMl`).
+`water_ml` is a hint per watering (`lib.js#wateringMl`): the pot volume (cylinder with height = diameter) × the care
+group's `ml` share from `care.json` (5 % cacti … 13 % ferns) × how fast the pot dries (terracotta 1.15, cachepot 0.8;
+full sun 1.15, dark corner 0.8; dry air 1.05) × the plant's learned `ml_adjust`, rounded to 10 ml. Groups with
+`ml_mode: "soak"` (orchids) get "dunk the pot" instead of a number (`water_mode`).
+
+**Learning from "still wet"** (`learnFromSnooze` / `learnFromWatering`): a second snooze in the same watering cycle, or
+one in each of two consecutive cycles, multiplies `ml_adjust` by 0.85 (floor 0.5) and `interval_adjust` by 1.1 (cap
+1.6) — once per cycle, and the triggering snooze event is marked `adjusted`. Three completed cycles without a snooze
+relax both by one step. `interval_adjust` is part of the interval formula on both server and client.
 
 ## care.json
 
@@ -110,7 +117,7 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 | POST | `save` | create (`id` null) or update; optional `photo` (thumbnail data URL, ≤ 600 KB) plus `photo_full` (≤ 2 MB, shown in the lightbox), both jpeg/png/webp with magic bytes checked, stored in `data/photos/`; `photo: null` removes both |
 | POST | `water` | `{id, date?}` → sets `last_watered`, appends to `waterings`, clears `last_notified`; returns `{plant, watering_id}` (the UI offers a 5 s undo) |
 | POST | `unwater` | `{watering_id}` → deletes that history row and recomputes `last_watered` from the remaining ones (undo, or removing a wrong entry) |
-| POST | `postpone` | `{id, days (1–7), note?}` — "still wet": sets `snoozed_until` to today (or the due date, if later) + days and logs a `snooze` event → `{plant, until}`. Watering clears it |
+| POST | `postpone` | `{id, days (1–7), note?}` — "still wet": sets `snoozed_until` to today (or the due date, if later) + days and logs a `snooze` event → `{plant, until, learned}` (`learned` = new `{ml_adjust, interval_adjust}` when the plan was tightened). Watering clears the snooze and may relax the factors (`relaxed`) |
 | POST | `delete` | `{id}` → removes plant, its history and photo |
 | GET | `vapid` | `{publicKey}` |
 | POST | `subscribe` / `unsubscribe` | PushSubscription JSON / `{endpoint}` |
@@ -132,7 +139,7 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 - `settings` — key (PK), value: `global_anthropic_key` (encrypted), `global_model`, `global_effort`
 - `users.use_global_key` — 1 = analyses run on the global key with its model/effort; the user's own key settings are locked and the account screen says so
 - `plants` — id, user_id, name, species, common, genus, family, group_key, base_summer, base_winter, pot_cm,
-  pot_material, light, dry_air, photo, photo_full, note, last_watered, last_notified, snoozed_until, created_at
+  pot_material, light, dry_air, photo, photo_full, note, last_watered, last_notified, snoozed_until, ml_adjust, interval_adjust, created_at
 - `waterings` — id, plant_id, ts. Every `last_watered` has a matching row: `save` adds one for a manually entered date, and `openDb()` backfills legacy plants without history.
 - `subs` — endpoint (PK), p256dh, auth, user_id, created_at. Re-subscribing from the same browser moves the endpoint to the current user.
 - `events` — id, plant_id, type, ts, note, data (JSON: before/after values for repot/move, sibling for split, `watered`), created_at. The profile's timeline merges events, waterings, health checks and `created_at`.

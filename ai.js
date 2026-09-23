@@ -126,7 +126,8 @@ export function plantContext(plant, care, today = new Date()) {
     `Doniczka: ${plant.pot_cm} cm, ${MATERIAL_LABEL[plant.pot_material] ?? plant.pot_material}`,
     `Światło: ${LIGHT_LABEL[plant.light] ?? plant.light}`,
     `Suche powietrze / grzejnik w pobliżu: ${plant.dry_air ? 'tak' : 'nie'}`,
-    `Wyliczony interwał podlewania: co ${plant.interval} dni`,
+    `Wyliczony interwał podlewania: co ${plant.interval} dni${plant.interval_adjust > 1 ? ` (wydłużony ×${plant.interval_adjust} po zgłoszeniach „nadal mokro”)` : ''}`,
+    plant.water_mode === 'soak' ? 'Sposób podlewania: moczenie doniczki (storczyk)' : `Orientacyjna porcja wody: ok. ${plant.water_ml} ml${plant.ml_adjust < 1 ? ` (zmniejszona ×${plant.ml_adjust} po zgłoszeniach „nadal mokro”)` : ''}`,
   ];
   const since = daysSince(plant.last_watered, today);
   lines.push(since === null ? 'Ostatnie podlanie: brak danych' : `Ostatnie podlanie: ${since} dni temu (${plant.last_watered})`);
@@ -152,7 +153,7 @@ export function describeEvent(e) {
   if (e.type === 'repot') bits.push(`${d.pot_cm_from ? `${d.pot_cm_from} → ` : ''}${d.pot_cm} cm${d.pot_material ? `, ${MATERIAL_LABEL[d.pot_material] ?? d.pot_material}` : ''}`);
   if (e.type === 'move') bits.push(`${LIGHT_LABEL[d.light] ?? d.light ?? ''}${d.dry_air ? ', suche powietrze' : ''}`);
   if (e.type === 'split') bits.push(d.role === 'child' ? `odłączona od „${d.sibling_name}”` : `oddzielono „${d.sibling_name}”`);
-  if (e.type === 'snooze') bits.push(`o ${d.days} dni`);
+  if (e.type === 'snooze') bits.push(`o ${d.days} dni${d.adjusted ? '; zmniejszono porcję i wydłużono interwał' : ''}`);
   if (d.watered) bits.push('podlana przy okazji');
   if (e.note) bits.push(e.note);
   return `${String(e.ts).slice(0, 10)} ${EVENT_LABEL_PL[e.type] ?? e.type}${bits.length ? `: ${bits.filter(Boolean).join('; ')}` : ''}`;

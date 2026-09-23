@@ -58,7 +58,8 @@ export function intervalDays(p, when = new Date()) {
     * potFactor(p.pot_cm)
     * (MATERIAL_FACTOR[p.pot_material] ?? 1)
     * (LIGHT_FACTOR[p.light] ?? 1)
-    * (p.dry_air ? DRY_AIR_FACTOR : 1);
+    * (p.dry_air ? DRY_AIR_FACTOR : 1)
+    * (Number(p.interval_adjust) || 1); // learned from "still wet" snoozes, 1.0–1.6
   return Math.min(MAX_DAYS, Math.max(MIN_DAYS, Math.round(days)));
 }
 
@@ -255,6 +256,8 @@ export function openDb(file = DB_FILE) {
   ensureColumn(db, 'users', 'use_global_key', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'plants', 'snoozed_until', 'TEXT'); // "still wet": reminder pushed to this date
   ensureColumn(db, 'plants', 'photo_full', 'TEXT');    // large photo for the lightbox; `photo` stays the thumbnail
+  ensureColumn(db, 'plants', 'ml_adjust', 'REAL NOT NULL DEFAULT 1');       // learned: portion multiplier 0.5–1
+  ensureColumn(db, 'plants', 'interval_adjust', 'REAL NOT NULL DEFAULT 1'); // learned: interval multiplier 1–1.6
   db.exec(`
     CREATE INDEX IF NOT EXISTS plants_user ON plants(user_id);
     CREATE INDEX IF NOT EXISTS subs_user ON subs(user_id);
@@ -269,14 +272,90 @@ export function ensureColumn(db, table, column, type) {
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
-// Rough amount per watering: ~10 % of the pot volume (cylinder, height ≈ diameter); drought-loving
-// groups get less, moisture-loving more. Only a hint — "water until it drains" still applies.
-const ML_FACTOR = { succulent: 0.06, cactus: 0.05, compact: 0.08, fern: 0.13, marantaceae: 0.12, aroid: 0.11, universal: 0.1 };
+// Amount per watering: a share of the pot volume (cylinder, height ≈ diameter) set per care group in
+// care.json (`ml`, ~5 % cacti … 13 % ferns), corrected for how fast the pot dries (material, light, dry
+// air) and by what the plant taught us through "still wet" snoozes. Only a hint — "until it drains" applies.
+export const ML_MATERIAL = { terracotta: 1.15, ceramic: 1.0, plastic: 1.0, cachepot: 0.8 };
+export const ML_LIGHT = { sun: 1.15, bright: 1.0, partial: 0.9, dark: 0.8 };
+export const ML_DRY_AIR = 1.05;
 export function wateringMl(p) {
   const cm = Number(p.pot_cm) || 15;
   const volume = Math.PI * (cm / 2) ** 2 * cm; // ml
-  const ml = volume * (ML_FACTOR[p.group_key] ?? 0.1);
+  const share = getCare().groups[p.group_key]?.ml ?? 0.1;
+  const ml = volume * share
+    * (ML_MATERIAL[p.pot_material] ?? 1)
+    * (ML_LIGHT[p.light] ?? 1)
+    * (p.dry_air ? ML_DRY_AIR : 1)
+    * (Number(p.ml_adjust) || 1);
   return Math.max(30, Math.round(ml / 10) * 10);
+}
+
+/** 'soak' (orchids: dunk the pot, drain) or 'pour' (a measured portion). */
+export function wateringMode(groupKey) {
+  return getCare().groups[groupKey]?.ml_mode === 'soak' ? 'soak' : 'pour';
+}
+
+// ---------------------------------------------------------------------------
+// Learning from "still wet": a plant that keeps being wet at its due date gets a smaller portion and a
+// longer interval; three calm cycles in a row bring both back toward the defaults.
+// ---------------------------------------------------------------------------
+const ML_STEP = 0.85;
+const INTERVAL_STEP = 1.1;
+const ML_MIN = 0.5;
+const INTERVAL_MAX = 1.6;
+
+/** Snooze counts per watering cycle, newest first: [{since, until, snoozes}] (cycle 0 = since the last watering). */
+export function snoozeCycles(db, plantId, limit = 4) {
+  const waterings = db.prepare('SELECT ts FROM waterings WHERE plant_id = ? ORDER BY ts DESC LIMIT ?').all(plantId, limit).map((w) => w.ts);
+  const snoozes = db.prepare("SELECT ts FROM events WHERE plant_id = ? AND type = 'snooze' ORDER BY ts DESC LIMIT 50").all(plantId).map((e) => e.ts);
+  const bounds = [null, ...waterings]; // null = now
+  const cycles = [];
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    const until = bounds[i];
+    const since = bounds[i + 1];
+    cycles.push({ since, until, snoozes: snoozes.filter((t) => t > since && (until === null || t <= until)).length });
+  }
+  return cycles;
+}
+
+/**
+ * Called after a snooze was logged. Tightens the plant's portion/interval when this cycle has two snoozes,
+ * or this and the previous cycle each have one — at most once per cycle. Returns the new factors or null.
+ */
+export function learnFromSnooze(db, plantId) {
+  const p = getPlant(db, plantId);
+  if (!p) return null;
+  const cycles = snoozeCycles(db, plantId, 2);
+  const now = cycles[0]?.snoozes ?? 0;
+  const prev = cycles[1]?.snoozes ?? 0;
+  if (!(now >= 2 || (now >= 1 && prev >= 1))) return null;
+  const lastWatering = cycles[0]?.since ?? '';
+  const already = db.prepare("SELECT 1 FROM events WHERE plant_id = ? AND type = 'snooze' AND ts > ? AND json_extract(data, '$.adjusted') IS NOT NULL LIMIT 1").get(plantId, lastWatering);
+  if (already) return null;
+  const ml_adjust = Math.max(ML_MIN, Math.round((Number(p.ml_adjust) || 1) * ML_STEP * 100) / 100);
+  const interval_adjust = Math.min(INTERVAL_MAX, Math.round((Number(p.interval_adjust) || 1) * INTERVAL_STEP * 100) / 100);
+  if (ml_adjust === p.ml_adjust && interval_adjust === p.interval_adjust) return null;
+  db.prepare('UPDATE plants SET ml_adjust = ?, interval_adjust = ? WHERE id = ?').run(ml_adjust, interval_adjust, plantId);
+  // Mark the snooze that triggered it (shown in the timeline, and the once-per-cycle guard above).
+  const latest = db.prepare("SELECT id, data FROM events WHERE plant_id = ? AND type = 'snooze' ORDER BY ts DESC LIMIT 1").get(plantId);
+  if (latest) {
+    let data = {};
+    try { data = JSON.parse(latest.data) || {}; } catch { data = {}; }
+    setEventData(db, latest.id, { ...data, adjusted: { ml_adjust, interval_adjust } });
+  }
+  return { ml_adjust, interval_adjust };
+}
+
+/** Called after a watering. Relaxes one step when the last three completed cycles had no snooze. Returns new factors or null. */
+export function learnFromWatering(db, plantId) {
+  const p = getPlant(db, plantId);
+  if (!p || ((Number(p.ml_adjust) || 1) >= 1 && (Number(p.interval_adjust) || 1) <= 1)) return null;
+  const cycles = snoozeCycles(db, plantId, 4).slice(1, 4); // completed cycles only
+  if (cycles.length < 3 || cycles.some((c) => c.snoozes > 0)) return null;
+  const ml_adjust = Math.min(1, Math.round((Number(p.ml_adjust) || 1) / ML_STEP * 100) / 100);
+  const interval_adjust = Math.max(1, Math.round((Number(p.interval_adjust) || 1) / INTERVAL_STEP * 100) / 100);
+  db.prepare('UPDATE plants SET ml_adjust = ?, interval_adjust = ? WHERE id = ?').run(ml_adjust, interval_adjust, plantId);
+  return { ml_adjust, interval_adjust };
 }
 
 /** Row → API object with computed schedule fields. */
@@ -313,6 +392,9 @@ export function decoratePlant(row, now = new Date()) {
     days_left,
     snoozed,
     water_ml: wateringMl(row),
+    water_mode: wateringMode(row.group_key),
+    ml_adjust: Number(row.ml_adjust) || 1,
+    interval_adjust: Number(row.interval_adjust) || 1,
     group_label: g.label,
     group_note: g.note,
     match_level: level,
@@ -838,6 +920,10 @@ export function insertEvent(db, e) {
   const r = db.prepare('INSERT INTO events (plant_id, type, ts, note, data, created_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(e.plant_id, e.type, e.ts ?? new Date().toISOString(), e.note ?? '', JSON.stringify(e.data ?? {}), new Date().toISOString());
   return Number(r.lastInsertRowid);
+}
+
+export function setEventData(db, id, data) {
+  db.prepare('UPDATE events SET data = ? WHERE id = ?').run(JSON.stringify(data ?? {}), id);
 }
 
 export function getEvent(db, id) {

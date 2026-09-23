@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
   listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
-  ensureWateringRow, deleteWatering, tsForDate, snoozePlant, PHOTO_FULL_MAX_BYTES,
+  ensureWateringRow, deleteWatering, tsForDate, snoozePlant, PHOTO_FULL_MAX_BYTES, learnFromSnooze, learnFromWatering,
   EVENT_TYPES, insertEvent, getEvent, listEvents, deleteEvent,
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto, photoBelongsTo,
@@ -653,7 +653,8 @@ const actions = {
     const date = b.date ? String(b.date) : toDateString();
     if (!parseDateString(date)) throw new HttpError(400, 'Nieprawidłowa data.');
     const watering_id = waterPlant(db, id, date);
-    sendJson(res, 200, { plant: myPlant(u, id), watering_id });
+    const relaxed = learnFromWatering(db, id);
+    sendJson(res, 200, { plant: myPlant(u, id), watering_id, relaxed });
   },
 
   // "Still wet": {id, days (1–7), note?} → reminder moved by `days`, logged as a snooze event.
@@ -668,7 +669,8 @@ const actions = {
     if (!Number.isFinite(days) || days < 1 || days > 7) throw new HttpError(400, 'Odłóż o 1–7 dni.');
     const until = snoozePlant(db, id, days);
     insertEvent(db, { plant_id: id, type: 'snooze', note: str(b.note, 200), data: { days, until } });
-    sendJson(res, 200, { plant: myPlant(u, id), until });
+    const learned = learnFromSnooze(db, id); // marks the event with `adjusted` when it tightened the plan
+    sendJson(res, 200, { plant: myPlant(u, id), until, learned });
   },
 
   // Removes one watering (undo, or a wrong entry in the history) and recomputes last_watered.
