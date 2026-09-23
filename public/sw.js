@@ -1,5 +1,5 @@
 // sw.js — offline shell cache + web push. API calls always go to the network.
-const CACHE = 'greenly-shell-v8';
+const CACHE = 'greenly-shell-v9';
 // Shell files are fetched network-first so an installed PWA runs the latest deploy on every open;
 // the cache is the offline fallback. Everything else (icons) is cache-first with a background refresh.
 const SHELL_PATHS = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest'];

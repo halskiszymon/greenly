@@ -53,8 +53,19 @@ img { display: block; max-width: 100%; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
-.brand { display: inline-flex; align-items: center; gap: 9px; font-size: 22px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); text-decoration: none; }
-.brand-icon { width: 30px; height: 30px; border-radius: 9px; box-shadow: 0 1px 3px rgba(28, 51, 38, .25); }
+.brand { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; font-size: 22px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); text-decoration: none; }
+.brand-icon { width: 30px; height: 30px; border-radius: 9px; box-shadow: 0 1px 3px rgba(28, 51, 38, .25); transition: transform .35s cubic-bezier(.2, .8, .2, 1); }
+.brand:hover .brand-icon, .brand.is-raining .brand-icon { transform: rotate(-8deg) scale(1.1); }
+
+/* easter egg: leaves and flowers falling while the logo is hovered / tapped */
+.leaf-rain { position: fixed; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.leaf { position: absolute; top: -8vh; left: var(--x); font-size: var(--size); line-height: 1; will-change: transform, opacity;
+  animation: leaf-fall var(--dur) cubic-bezier(.3, .1, .6, 1) var(--delay) forwards, leaf-sway var(--sway) ease-in-out var(--delay) infinite alternate; }
+.leaf i { display: block; font-style: normal; animation: leaf-spin var(--spin) linear infinite; }
+@keyframes leaf-fall { 0% { transform: translateY(0); opacity: 0; } 8% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(120vh); opacity: 0; } }
+@keyframes leaf-sway { from { margin-left: calc(var(--amp) * -1); } to { margin-left: var(--amp); } }
+@keyframes leaf-spin { to { transform: rotate(var(--turn)); } }
+@media (prefers-reduced-motion: reduce) { .leaf { display: none; } .brand-icon { transition: none; } }
 .brand b { color: var(--water); font-weight: 700; }
 .topbar-actions { display: flex; gap: 4px; }
 .topbar { padding-right: 10px; }
@@ -174,7 +185,7 @@ img { display: block; max-width: 100%; }
 .sheet-body { overflow-y: auto; padding: 4px 20px 20px; -webkit-overflow-scrolling: touch; }
 
 /* forms */
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; min-width: 0; }
 .field > label, .field > .label { font-size: 14px; color: var(--muted); }
 .field input[type="text"], .field input[type="date"], .field select, .field textarea {
   padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); width: 100%; min-height: 44px;
@@ -554,3 +565,32 @@ input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; b
 .howto li { margin-bottom: 8px; }
 .howto code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
 .howto a { color: var(--water-ink); }
+
+/* custom select */
+.xsel-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.xsel-btn {
+  min-width: 0; max-width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px;
+  padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink);
+  text-align: left; cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+.xsel-btn:hover { border-color: color-mix(in srgb, var(--water) 55%, var(--line)); }
+.xsel-btn.is-open, .xsel-btn:focus-visible { border-color: var(--water); box-shadow: 0 0 0 3px var(--water-soft); outline: none; }
+.xsel-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xsel-chev { width: 9px; height: 9px; flex-shrink: 0; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-2px) rotate(45deg); transition: transform .25s cubic-bezier(.2, .8, .2, 1), border-color .18s ease; }
+.xsel-btn.is-open .xsel-chev { transform: translateY(2px) rotate(-135deg); border-color: var(--water-ink); }
+.xsel-list {
+  position: fixed; z-index: 90; margin: 0; padding: 6px; list-style: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--surface); border-radius: 14px; box-shadow: 0 12px 36px rgba(28, 51, 38, .22), 0 1px 3px rgba(28, 51, 38, .1);
+  transform-origin: top center; transform: translateY(-6px) scale(.97); opacity: 0;
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1), opacity .16s ease; outline: none;
+}
+.xsel-list.up { transform-origin: bottom center; transform: translateY(6px) scale(.97); }
+.xsel-list.open { transform: none; opacity: 1; }
+.xsel-opt { padding: 10px 12px 10px 34px; border-radius: 9px; cursor: pointer; position: relative; font-size: 15px; line-height: 1.3; color: var(--ink); transition: background-color .12s ease; }
+.xsel-list.open .xsel-opt { animation: xsel-in .26s cubic-bezier(.2, .8, .2, 1) both; animation-delay: var(--d); }
+@keyframes xsel-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.xsel-opt.is-active { background: var(--bg); }
+.xsel-opt.is-selected { color: var(--water-ink); font-weight: 600; }
+.xsel-opt.is-selected::before { content: ''; position: absolute; left: 13px; top: 13px; width: 6px; height: 11px; border-right: 2px solid var(--water-ink); border-bottom: 2px solid var(--water-ink); transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { .xsel-list, .xsel-chev, .xsel-btn { transition: none; } .xsel-list.open .xsel-opt { animation: none; } }

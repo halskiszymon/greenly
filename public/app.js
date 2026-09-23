@@ -1,5 +1,10 @@
 // app.js — greenLy frontend. Plain ES module, no build step.
 
+// Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
+// (test/version.test.mjs checks they match). The server reads this constant from the file and
+// the running app compares it with /api/version to offer a reload after a deploy.
+export const APP_VERSION = '9';
+
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';
 
@@ -549,6 +554,7 @@ function openSheet(title) {
 
 function closeSheet() {
   if (el.sheet.hidden) return;
+  closeSelect();
   el.backdrop.classList.remove('open');
   el.sheet.classList.remove('open');
   document.body.style.overflow = '';
@@ -2214,6 +2220,161 @@ function renderAdmin({ users, invites, config_invite, global: g }) {
 }
 
 // ---------------------------------------------------------------------------
+// custom selects: every <select> rendered into the sheet gets a styled button + animated list.
+// The native element stays in the DOM (hidden) as the source of truth, so form.field.value and
+// 'input'/'change' listeners keep working unchanged.
+// ---------------------------------------------------------------------------
+const xsel = { open: null }; // {sel, btn, list, closeFn}
+const xselPortal = $('#xsel-portal');
+
+function enhanceSelect(sel) {
+  if (sel.dataset.enhanced) return;
+  sel.dataset.enhanced = '1';
+  sel.tabIndex = -1;
+  sel.classList.add('xsel-native');
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'xsel-btn';
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
+  if (sel.id) { btn.id = `${sel.id}-btn`; const lab = document.querySelector(`label[for="${sel.id}"]`); if (lab) lab.setAttribute('for', btn.id); }
+  const sync = () => { btn.innerHTML = `<span class="xsel-label">${esc(sel.options[sel.selectedIndex]?.text ?? '')}</span><span class="xsel-chev" aria-hidden="true"></span>`; };
+  sync();
+  sel.addEventListener('change', sync);
+  sel.insertAdjacentElement('afterend', btn);
+  btn.addEventListener('click', () => (xsel.open?.sel === sel ? closeSelect() : openSelect(sel, btn)));
+  btn.addEventListener('keydown', (e) => {
+    if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); openSelect(sel, btn); }
+  });
+}
+
+function openSelect(sel, btn) {
+  closeSelect();
+  const list = document.createElement('ul');
+  list.className = 'xsel-list';
+  list.setAttribute('role', 'listbox');
+  list.tabIndex = -1;
+  list.innerHTML = [...sel.options].map((o, i) => `<li role="option" class="xsel-opt ${o.selected ? 'is-selected' : ''}" data-i="${i}" aria-selected="${o.selected}" style="--d:${i * 28}ms">${esc(o.text)}</li>`).join('');
+  xselPortal.appendChild(list);
+  // Fixed-position popover next to the button: at least 260 px wide (long labels), clamped to the
+  // viewport, flipped above the button when there is more room there. Re-run on scroll.
+  const place = () => {
+    const r = btn.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight) return closeSelect();
+    const margin = 8;
+    const h = Math.min(list.scrollHeight + 12, 320);
+    const below = window.innerHeight - r.bottom - margin;
+    const up = below < h && r.top > below;
+    const width = Math.min(Math.max(r.width, 260), window.innerWidth - 16);
+    list.style.width = `${width}px`;
+    list.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - width - 8))}px`;
+    list.style.maxHeight = `${Math.max(120, up ? r.top - margin * 2 : below - margin)}px`;
+    list.classList.toggle('up', up);
+    list.style.top = up ? '' : `${r.bottom + 4}px`;
+    list.style.bottom = up ? `${window.innerHeight - r.top + 4}px` : '';
+  };
+  place();
+  void list.offsetHeight;
+  list.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  btn.classList.add('is-open');
+
+  let active = sel.selectedIndex;
+  const opts = [...list.children];
+  const highlight = (i) => { active = Math.max(0, Math.min(opts.length - 1, i)); opts.forEach((o, j) => o.classList.toggle('is-active', j === active)); opts[active].scrollIntoView({ block: 'nearest' }); };
+  const choose = (i) => {
+    if (sel.selectedIndex !== i) { sel.selectedIndex = i; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    closeSelect();
+    btn.focus();
+  };
+  list.addEventListener('click', (e) => { const li = e.target.closest('.xsel-opt'); if (li) choose(Number(li.dataset.i)); });
+  list.addEventListener('mousemove', (e) => { const li = e.target.closest('.xsel-opt'); if (li) highlight(Number(li.dataset.i)); });
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closeSelect(); btn.focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); highlight(active + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active - 1); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(active); }
+    else if (e.key === 'Tab') closeSelect();
+  };
+  const onDown = (e) => { if (!list.contains(e.target) && e.target !== btn && !btn.contains(e.target)) closeSelect(); };
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('pointerdown', onDown, true);
+  el.sheetBody.addEventListener('scroll', place, { passive: true });
+  window.addEventListener('resize', closeSelect, { once: true });
+  xsel.open = { sel, btn, list, closeFn() {
+    document.removeEventListener('keydown', onKey);
+    document.removeEventListener('pointerdown', onDown, true);
+    el.sheetBody.removeEventListener('scroll', place);
+  } };
+  highlight(active);
+  list.focus({ preventScroll: true });
+}
+
+function closeSelect() {
+  const o = xsel.open;
+  if (!o) return;
+  xsel.open = null;
+  o.closeFn();
+  o.btn.setAttribute('aria-expanded', 'false');
+  o.btn.classList.remove('is-open');
+  o.list.classList.remove('open');
+  const finish = () => o.list.remove();
+  if (reduceMotion.matches) finish(); else setTimeout(finish, 180);
+}
+
+new MutationObserver(() => { for (const sel of el.sheetBody.querySelectorAll('select:not([data-enhanced])')) enhanceSelect(sel); })
+  .observe(el.sheetBody, { childList: true, subtree: true });
+
+// ---------------------------------------------------------------------------
+// easter egg: hover (or tap) the logo and the screen fills with falling leaves and flowers
+// ---------------------------------------------------------------------------
+const LEAVES = ['🍃', '🌿', '🍂', '🌸', '🌼', '🌷', '🌱', '🍀', '🌺', '🪻', '🍁', '🌻'];
+const rain = { timer: null, until: 0 };
+function spawnLeaf() {
+  const host = $('#leaf-rain');
+  if (host.childElementCount > 90) return;
+  const el = document.createElement('span');
+  el.className = 'leaf';
+  const dur = 3.2 + Math.random() * 3.5;
+  el.style.setProperty('--x', `${Math.random() * 100}vw`);
+  el.style.setProperty('--size', `${16 + Math.random() * 20}px`);
+  el.style.setProperty('--dur', `${dur}s`);
+  el.style.setProperty('--delay', `${Math.random() * 0.4}s`);
+  el.style.setProperty('--sway', `${1.2 + Math.random() * 1.6}s`);
+  el.style.setProperty('--amp', `${18 + Math.random() * 40}px`);
+  el.style.setProperty('--spin', `${2 + Math.random() * 4}s`);
+  el.style.setProperty('--turn', `${Math.random() < 0.5 ? '-' : ''}${180 + Math.random() * 540}deg`);
+  el.innerHTML = `<i>${LEAVES[Math.floor(Math.random() * LEAVES.length)]}</i>`;
+  el.addEventListener('animationend', (e) => { if (e.animationName === 'leaf-fall') el.remove(); });
+  host.appendChild(el);
+}
+function startRain(ms = 0) {
+  if (reduceMotion.matches) return;
+  $('#brand').classList.add('is-raining');
+  rain.until = ms ? Date.now() + ms : Infinity;
+  if (rain.timer) return;
+  for (let i = 0; i < 10; i++) spawnLeaf();
+  rain.timer = setInterval(() => {
+    if (Date.now() > rain.until) return stopRain();
+    spawnLeaf(); spawnLeaf();
+  }, 220);
+}
+function stopRain() {
+  clearInterval(rain.timer);
+  rain.timer = null;
+  $('#brand').classList.remove('is-raining');
+}
+const brand = $('#brand');
+brand.addEventListener('mouseenter', () => startRain());
+brand.addEventListener('mouseleave', () => { rain.until = Date.now() + 600; });
+brand.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (!state.token) return;
+  startRain(3500); // touch devices have no hover: a tap gives a short shower on the way home
+  if (location.hash) location.hash = ''; else window.scrollTo({ top: 0, behavior: reduceMotion.matches ? 'auto' : 'smooth' });
+});
+
+// ---------------------------------------------------------------------------
 // boot
 // ---------------------------------------------------------------------------
 if ('serviceWorker' in navigator) {
@@ -2221,22 +2382,16 @@ if ('serviceWorker' in navigator) {
 }
 
 // ---------------------------------------------------------------------------
-// app updates: the service worker fetches the shell network-first, so a fresh open runs the
-// latest deploy. An app that stays open (iOS PWA resumed from the background) compares the
-// ETag of app.js on every return and offers a reload.
+// app updates: the server reports the APP_VERSION of the app.js it has on disk; whenever it differs
+// from the one running here (stale HTTP/SW cache, an app resumed from the background after a deploy)
+// a blocking dialog offers a hard reload.
 // ---------------------------------------------------------------------------
-let assetTag = null;
-async function fetchAssetTag() {
-  try {
-    const res = await fetch('./app.js', { method: 'HEAD', cache: 'no-store' });
-    return res.headers.get('etag') || res.headers.get('last-modified');
-  } catch { return null; }
-}
 async function checkForUpdate() {
-  const tag = await fetchAssetTag();
-  if (!tag) return;
-  if (assetTag === null) { assetTag = tag; return; }
-  if (tag !== assetTag) showUpdateModal();
+  try {
+    const res = await fetch(`${API}version`, { cache: 'no-store' });
+    const { version } = await res.json();
+    if (version && version !== APP_VERSION) showUpdateModal();
+  } catch { /* offline — nothing to do */ }
 }
 function showUpdateModal() {
   const m = $('#update-modal');

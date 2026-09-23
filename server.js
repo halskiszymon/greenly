@@ -29,6 +29,7 @@ import { createClient as createAiClient, analyzeHealth, describeSpecies, describ
 let config;
 let db;
 let secret; // server secret for encrypting per-user API keys
+let appVersion = null; // APP_VERSION read from public/app.js at start (see /api/version)
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const JSON_LIMIT = 6 * 1024 * 1024; // save: thumbnail + full-size photo as base64 data URLs
@@ -718,6 +719,11 @@ const actions = {
     fs.createReadStream(file).pipe(res);
   },
 
+  // Version of the frontend on disk; the running app compares it with its own APP_VERSION.
+  async version(req, res) {
+    sendJson(res, 200, { version: appVersion });
+  },
+
   // HTTP fallback for the daily reminder — protected by cronSecret, not by the login token.
   async cron(req, res, url) {
     const secret = url.searchParams.get('secret') ?? '';
@@ -777,7 +783,7 @@ const server = http.createServer(async (req, res) => {
   const action = actions[m[1]];
   try {
     if (!action) throw new HttpError(404, 'Nieznana akcja.');
-    const isGet = ['plants', 'plant', 'vapid', 'photo', 'cron', 'admin'].includes(m[1]);
+    const isGet = ['plants', 'plant', 'vapid', 'photo', 'cron', 'admin', 'version'].includes(m[1]);
     if (isGet ? req.method !== 'GET' : req.method !== 'POST') throw new HttpError(405, 'Niedozwolona metoda.');
     await action(req, res, url, m[2]);
   } catch (e) {
@@ -812,6 +818,7 @@ async function main() {
   loadCare();
   db = openDb();
   secret = loadSecret(config);
+  appVersion = /APP_VERSION = '([^']+)'/.exec(fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8'))?.[1] ?? null;
   const adminId = ensureAdmin(db, config, secret);
   if (adminId) console.log(`greenLy: created user "${normalizeLogin(config.adminLogin) || 'admin'}" from config.password and assigned existing plants to it`);
   if (config.inviteCode) console.log('greenLy: config.inviteCode is set — it works as an unlimited invite next to the codes from the admin panel');
