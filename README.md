@@ -80,6 +80,10 @@ Issues and pull requests are welcome. Keep the zero-build setup, run `npm test` 
 English translation for any new UI text in `public/i18n.js` (a test enforces it). Code, comments and docs are in
 English.
 
+## License
+
+[MIT](LICENSE) © Szymon Halski
+
 ## Contact
 
 The reference instance is run by Szymon Halski — [greenly@freely.digital](mailto:greenly@freely.digital).
