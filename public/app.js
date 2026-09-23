@@ -3,7 +3,7 @@
 // Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
 // (test/version.test.mjs checks they match). The server reads this constant from the file and
 // the running app compares it with /api/version to offer a reload after a deploy.
-export const APP_VERSION = '14';
+export const APP_VERSION = '15';
 
 import { t, lang, setLang, plural, locale, translateDom } from './i18n.js';
 
@@ -2404,7 +2404,7 @@ function stopRain() {
   $('#brand').classList.remove('is-raining');
 }
 // Sprouts: a small leaf or flower grows out of the logo, drifts up and sideways, then falls for
-// 1–2 s while fading out. The hero logo on the Start tab sprouts often, the header logo rarely.
+// 1–2 s while fading out. The hero logo on the Start tab sprouts often, the header logo every few seconds.
 const SPROUTS = ['🌸', '🌼', '🌷', '🍃', '🌿', '🌺', '🌱', '🍀'];
 function sprout(host, { size = 16 } = {}) {
   if (reduceMotion.matches) return;
@@ -2429,7 +2429,7 @@ function sproutLoop(host, minMs, maxMs, opts) {
   };
   setTimeout(tick, minMs);
 }
-sproutLoop($('#brand-sprouts'), 8000, 15000, { size: 13 });
+sproutLoop($('#brand-sprouts'), 3000, 6000, { size: 13 });
 sproutLoop($('#hero-logo'), 1600, 2800, { size: 18 });
 
 const brand = $('#brand');

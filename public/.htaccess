@@ -1,6 +1,6 @@
 # Applied by Apache when it serves these files. On Plesk with "serve static files directly by nginx"
 # enabled this file is bypassed — set the same headers in Plesk → Apache & nginx Settings →
-# Additional nginx directives (snippet in SECURITY_AUDIT.md).
+# Additional nginx directives (snippet in SECURITY.md, Hardening checklist).
 Options -Indexes
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"

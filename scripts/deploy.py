@@ -10,7 +10,7 @@ Reads credentials from .deploy.env (gitignored) next to the repository root:
     DEPLOY_TLS=1                 # 1 = FTPS (explicit TLS, default), 0 = plain FTP
 
 Only `git ls-files` are uploaded, so config.js, data/ and node_modules/ never leave your machine.
-After the first upload you still need, in Plesk: Node.js app setup, NPM install, config.js — see DEPLOY.md.
+After the first upload you still need, in Plesk: Node.js app setup, NPM install, config.js — see docs/DEPLOY-PLESK.md.
 
 Usage:  python3 scripts/deploy.py [--dry-run]
 """
@@ -90,7 +90,7 @@ def main():
             ftp.storbinary(f"STOR {remote}", fh)
         print("  up", f)
     ftp.quit()
-    print("done. Next in Plesk: Node.js app → NPM install → config.js → Restart (DEPLOY.md §2–3).")
+    print("done. Next in Plesk: Node.js app → NPM install → config.js → Restart (docs/DEPLOY-PLESK.md §2–3).")
 
 
 if __name__ == "__main__":

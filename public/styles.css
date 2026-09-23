@@ -601,7 +601,7 @@ input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; b
 .start { display: flex; flex-direction: column; gap: 14px; animation: view-in .3s cubic-bezier(.2, .8, .2, 1); }
 .start-hero { text-align: center; padding: 6px 0 2px; }
 .hero-logo { position: relative; width: 72px; height: 72px; margin: 0 auto 10px; }
-.hero-svg { display: block; border-radius: 18px; box-shadow: 0 6px 20px rgba(28, 51, 38, .22); animation: hero-float 4.5s ease-in-out infinite; }
+.hero-svg { display: block; overflow: visible; filter: drop-shadow(0 6px 12px rgba(28, 51, 38, .22)); animation: hero-float 4.5s ease-in-out infinite; } /* drop-shadow follows the rounded shape; Safari draws box-shadow on animated SVG as a square */
 .hero-drop { transform-origin: 232px 300px; animation: hero-bob 3.6s ease-in-out infinite; }
 .hero-leaf { transform-origin: 300px 380px; animation: hero-sway 3s ease-in-out infinite; }
 .hero-glint { animation: hero-glint 3.6s ease-in-out infinite; }

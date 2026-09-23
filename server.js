@@ -94,7 +94,7 @@ function securityHeaders(req) {
   return h;
 }
 // Only for HTML served by this process (standalone mode / dev). Plesk serves index.html through nginx —
-// see SECURITY_AUDIT.md for the equivalent nginx directives. Inline style attributes are used by the
+// see SECURITY.md (Hardening checklist) for the equivalent nginx directives. Inline style attributes are used by the
 // app's templates, hence 'unsafe-inline' for styles only; there are no inline scripts.
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
 
