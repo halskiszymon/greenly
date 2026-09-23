@@ -797,33 +797,74 @@ export function setUserAi(db, id, { anthropic_key, anthropic_model, anthropic_ef
   );
 }
 
+// Sessions are stored as sha256(token): a leaked database does not yield usable bearer tokens.
+// Rows written before hashing existed hold the raw token; sessionUser() upgrades them on first use.
+export function sessionKey(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
 export function createSession(db, userId) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date().toISOString();
-  db.prepare('INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)').run(token, userId, now, now);
+  db.prepare('INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)').run(sessionKey(token), userId, now, now);
   return token;
 }
 
 /** User row for a session token, or null. last_seen is bumped at most once an hour. */
 export function sessionUser(db, token) {
   if (!token || typeof token !== 'string' || token.length !== 64) return null;
-  const row = db.prepare('SELECT s.token, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token);
-  if (!row) return null;
+  const find = db.prepare('SELECT s.token, s.last_seen, u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?');
+  const key = sessionKey(token);
+  let row = find.get(key);
+  if (!row) {
+    row = find.get(token); // legacy raw row → rewrite as hash
+    if (!row) return null;
+    db.prepare('UPDATE sessions SET token = ? WHERE token = ?').run(key, token);
+  }
   if (Date.now() - Date.parse(row.last_seen) > 3600_000) {
-    db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?').run(new Date().toISOString(), token);
+    db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?').run(new Date().toISOString(), key);
   }
   const { token: _t, last_seen: _l, ...user } = row;
   return user;
 }
 
 export function deleteSession(db, token) {
-  db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  db.prepare('DELETE FROM sessions WHERE token = ? OR token = ?').run(sessionKey(token), token);
 }
 
 export function deleteUserSessions(db, userId, keepToken = null) {
-  if (keepToken) db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, keepToken);
+  if (keepToken) db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ? AND token <> ?').run(userId, sessionKey(keepToken), keepToken);
   else db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
 }
+
+// Photo URLs are loaded by <img>, which cannot send an Authorization header, so they carry a token in
+// the query string — and query strings end up in web-server access logs. That token is therefore not
+// the session but a short-lived HMAC that only grants photo reads: "<userId>.<expiry>.<sig>".
+export const PHOTO_TOKEN_TTL_MS = 7 * 86400000;
+
+export function photoToken(secret, userId, now = Date.now()) {
+  const exp = now + PHOTO_TOKEN_TTL_MS;
+  const body = `${userId}.${exp}`;
+  const sig = crypto.createHmac('sha256', secretKey(secret)).update('photo|' + body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+/** userId for a valid, unexpired photo token; null otherwise. */
+export function photoTokenUser(secret, token, now = Date.now()) {
+  const m = /^(\d+)\.(\d+)\.([A-Za-z0-9_-]{43})$/.exec(String(token ?? ''));
+  if (!m) return null;
+  if (Number(m[2]) < now) return null;
+  const expected = crypto.createHmac('sha256', secretKey(secret)).update(`photo|${m[1]}.${m[2]}`).digest('base64url');
+  return safeEqual(m[3], expected) ? Number(m[1]) : null;
+}
+
+/** A dummy verification that costs as much as a real one, so an unknown login takes as long as a wrong password. */
+const DUMMY_HASH = hashPassword('greenly-timing-dummy');
+export function verifyPasswordOrDummy(password, stored) {
+  return stored ? verifyPassword(password, stored) : (verifyPassword(password, DUMMY_HASH), false);
+}
+
+export const MAX_PASSWORD = 200; // scrypt on unbounded input is a cheap way to burn CPU
 
 /** Sessions unused for a year are dropped on start. */
 export function pruneSessions(db, maxAgeDays = 365) {

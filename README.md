@@ -97,8 +97,9 @@ Species names are normalized before matching (lower-case, hybrid sign and cultiv
 
 ## API
 
-All endpoints are under `/api/` and return JSON. Everything except `login`, `register` and `cron` requires
-`Authorization: Bearer <token>` (fallback: `?t=<token>`, used for `<img>` photo URLs). Missing/invalid token → 401.
+All endpoints are under `/api/` and return JSON. Everything except `login`, `register`, `version` and `cron` requires
+`Authorization: Bearer <token>`. `photo/<file>` alternatively takes `?t=<photo_token>` (from `user.photo_token`) for
+`<img>` loads. Missing/invalid token → 401.
 Every plant, watering, event, check, photo and subscription is scoped to the session's user; foreign ids → 404.
 
 | method | action | body / notes |
@@ -128,7 +129,7 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 | POST | `unevent` | `{event_id}` → deletes the event (condition changes are not reverted) |
 | POST | `split` | `{id, name, pot_cm?, pot_material?, photo?, watered?, date?, note?}` — division: creates a second plant with the same species/profile/conditions, logs a `split` event on both → `{plant, original}` |
 | POST | `profile` | `{id, refresh?}` → species care profile written by Claude, cached in `plants.profile` |
-| GET | `cron?secret=…` | runs the reminder; protected by `cronSecret`, not the login token |
+| GET | `cron` | runs the reminder; `cronSecret` in the `X-Cron-Secret` header or `?secret=`; not the login token |
 
 ## Database (SQLite, `data/greenly.sqlite`)
 
@@ -227,8 +228,17 @@ Node prints an `ExperimentalWarning` for `node:sqlite` on 22.x/23.x; it is harml
 
 - `config.js` is gitignored and lives outside `public/`, as do `data/` and the SQLite file; the static
   handler refuses paths outside `public/`.
-- Passwords are scrypt-hashed; session tokens are 32 random bytes; Anthropic keys are encrypted at rest and never
-  returned to the client (only the last 4 characters as a hint). Login and registration failures are delayed by 400 ms.
+- Passwords are scrypt-hashed (8–200 chars); session tokens are 32 random bytes stored as sha256 in the database and
+  accepted only in the `Authorization` header; Anthropic keys are encrypted at rest and never returned to the client
+  (only the last 4 characters as a hint). Unknown logins cost the same as wrong passwords (no enumeration by timing).
+- Photos are `<img>` loads, so they use a separate 7-day HMAC photo token (`user.photo_token`, scoped to photo reads)
+  in the query string instead of the session — query strings end up in access logs.
+- Rate limits (in-memory, per IP / per account): login 10 per 15 min, registration 5 per 15 min, password checks
+  10 per 15 min, Claude calls 30 per 10 min, cron 6 per min. Limited requests get 429 with `Retry-After`.
+- JSON bodies are capped at 16 KB except `save`/`split` (6 MB, they carry photos) and `subscribe` (8 KB); multipart at 24 MB.
+- Every Node response carries `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  `Permissions-Policy`, COOP/CORP and, over HTTPS, HSTS; HTML served by Node gets a CSP (`script-src 'self'`). On Plesk
+  the static files come from nginx — see DEPLOY.md § 7b for the directives. `SECURITY_AUDIT.md` has the full audit.
 - Photos are validated by MIME prefix **and** magic bytes, size-capped, and served only with a valid token.
 - All inputs are length-limited and enum-checked server-side; profiles are re-resolved on save, the client
   cannot set base values.

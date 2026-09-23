@@ -146,9 +146,31 @@ Check the exact Node path with `ls /opt/plesk/node/` — it must match the versi
 because `node:sqlite` needs ≥ 22.13.
 
 **Fallback when "Run a command" is not allowed:** task type **Fetch a URL** with
-`https://<domain>/api/cron?secret=<cronSecret>`. Same effect.
+`https://<domain>/api/cron?secret=<cronSecret>`. Same effect. If you can send headers (e.g. from another host with
+`curl -H "X-Cron-Secret: <cronSecret>"`), prefer the header: query strings are written to the web-server access log.
 
 The script logs one line: `cron: due=N sent=N removed=N failed=N`.
+
+## 7b. Security headers (Plesk)
+
+Node adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and HSTS to everything
+it serves (`/api/*`). The HTML, JS and CSS are served by nginx/Apache, which add nothing by default, so set them once
+in *Websites & Domains → Apache & nginx Settings → Additional nginx directives*:
+
+```nginx
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+add_header Strict-Transport-Security "max-age=15552000; includeSubDomains" always;
+# Start in report-only mode, watch the browser console for a few days, then rename to Content-Security-Policy.
+add_header Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+```
+
+`public/.htaccess` carries the same headers for setups where Apache serves the static files. Also tick
+*HSTS* under *SSL/TLS Certificates* if you prefer Plesk to manage it, and turn off the `X-Powered-By: PleskLin` header
+(*Apache & nginx Settings → Additional nginx directives*: `more_clear_headers 'X-Powered-By';` when the headers-more
+module is available, otherwise leave it — it reveals only the panel vendor).
 
 ## 8. iPhone: add to Home Screen
 

@@ -15,7 +15,8 @@ import {
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto, photoBelongsTo,
   safeEqual, parseDateString, toDateString, MATERIAL_FACTOR, LIGHT_FACTOR,
-  normalizeLogin, MIN_PASSWORD, verifyPassword, createUser, getUser, getUserByLogin, setUserPassword, setUserAi,
+  normalizeLogin, MIN_PASSWORD, MAX_PASSWORD, verifyPassword, verifyPasswordOrDummy, createUser, getUser, getUserByLogin, setUserPassword, setUserAi,
+  photoToken, photoTokenUser,
   createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
   setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
   setUseGlobalKey, getSetting, setSetting, setUserLang,
@@ -33,7 +34,9 @@ let secret; // server secret for encrypting per-user API keys
 let appVersion = null; // APP_VERSION read from public/app.js at start (see /api/version)
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const JSON_LIMIT = 6 * 1024 * 1024; // save: thumbnail + full-size photo as base64 data URLs
+const JSON_LIMIT = 16 * 1024;           // default for JSON bodies (auth, settings, small mutations)
+const JSON_PHOTO_LIMIT = 6 * 1024 * 1024; // save/split: thumbnail + full-size photo as base64 data URLs
+const PUSH_JSON_LIMIT = 8 * 1024;       // a PushSubscription
 const UPLOAD_LIMIT = 24 * 1024 * 1024; // up to 4 check-up photos of ≤ 5 MB
 const MAX_CHECK_PHOTOS = 4;
 
@@ -75,14 +78,72 @@ function translateMessage(message, lang) {
 // helpers
 // ---------------------------------------------------------------------------
 
-function sendJson(res, status, data) {
+// Security headers on every response Node produces. The API is same-origin JSON only, so nothing
+// here can break a legitimate client. HSTS is added only when the request arrived over HTTPS
+// (directly or via the Plesk proxy), so a plain-HTTP dev server never pins browsers to TLS.
+function securityHeaders(req) {
+  const h = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+  if (req.headers['x-forwarded-proto'] === 'https' || req.socket?.encrypted) h['Strict-Transport-Security'] = 'max-age=15552000; includeSubDomains';
+  return h;
+}
+// Only for HTML served by this process (standalone mode / dev). Plesk serves index.html through nginx —
+// see SECURITY_AUDIT.md for the equivalent nginx directives. Inline style attributes are used by the
+// app's templates, hence 'unsafe-inline' for styles only; there are no inline scripts.
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+
+function sendJson(res, status, data, req = null) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    ...(req ? securityHeaders(req) : {}),
   });
   res.end(body);
 }
+
+// ---------------------------------------------------------------------------
+// rate limiting — in-memory sliding windows keyed by client IP (and login where it matters).
+// Sized for humans: a person mistyping a password ten times in a quarter hour is fine, a script is not.
+// ---------------------------------------------------------------------------
+const rateBuckets = new Map(); // key → timestamps (ms) within the window
+const RATE = {
+  login: { max: 10, windowMs: 15 * 60_000 },     // per IP and per login
+  register: { max: 5, windowMs: 15 * 60_000 },   // per IP; also stops invite-code guessing
+  password: { max: 10, windowMs: 15 * 60_000 },  // current-password checks in /account, per user
+  cron: { max: 6, windowMs: 60_000 },
+  ai: { max: 30, windowMs: 10 * 60_000 },        // Claude calls per user: a runaway client cannot drain a key
+};
+function clientIp(req) {
+  // Behind Plesk (nginx → Apache → Passenger) the socket address is the proxy; the first XFF hop is the client.
+  const xff = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim();
+  return xff || req.socket?.remoteAddress || 'unknown';
+}
+function rateLimit(kind, key) {
+  const { max, windowMs } = RATE[kind];
+  const now = Date.now();
+  const k = `${kind}:${key}`;
+  const hits = (rateBuckets.get(k) ?? []).filter((t) => now - t < windowMs);
+  if (hits.length >= max) {
+    const retry = Math.ceil((hits[0] + windowMs - now) / 1000);
+    throw Object.assign(new HttpError(429, `Za dużo prób. Spróbuj ponownie za ${Math.max(1, Math.ceil(retry / 60))} min.`), { retryAfter: retry });
+  }
+  hits.push(now);
+  rateBuckets.set(k, hits);
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, hits] of rateBuckets) {
+    const windowMs = RATE[k.split(':')[0]]?.windowMs ?? 60_000;
+    if (!hits.some((t) => now - t < windowMs)) rateBuckets.delete(k);
+  }
+}, 10 * 60_000).unref();
 
 async function readBody(req, limit) {
   const chunks = [];
@@ -95,8 +156,8 @@ async function readBody(req, limit) {
   return Buffer.concat(chunks);
 }
 
-async function readJson(req) {
-  const buf = await readBody(req, JSON_LIMIT);
+async function readJson(req, limit = JSON_LIMIT) {
+  const buf = await readBody(req, limit);
   if (!buf.length) return {};
   try { return JSON.parse(buf.toString('utf8')); }
   catch { throw new HttpError(400, 'Nieprawidłowy JSON.'); }
@@ -111,15 +172,15 @@ async function readMultipart(req) {
   }
 }
 
-function requestToken(req, url) {
+/** Session tokens travel only in the Authorization header — never in the URL (access logs). */
+function requestToken(req) {
   const header = req.headers.authorization ?? '';
-  const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  return bearer || url.searchParams.get('t') || '';
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
 }
 
 /** Session → user row (without the token). Throws 401 when missing or unknown. */
-function requireAuth(req, url) {
-  const user = sessionUser(db, requestToken(req, url));
+function requireAuth(req) {
+  const user = sessionUser(db, requestToken(req));
   if (!user) throw new HttpError(401, 'Brak autoryzacji — zaloguj się ponownie.');
   return user;
 }
@@ -129,8 +190,8 @@ function globalInfo() {
   return { has_key: !!g.key, key_hint: g.key ? g.key.slice(-4) : null, model: g.model, effort: g.effort };
 }
 
-function requireAdmin(req, url) {
-  const user = requireAuth(req, url);
+function requireAdmin(req) {
+  const user = requireAuth(req);
   if (!user.is_admin) throw new HttpError(403, 'Tylko dla administratora.');
   return user;
 }
@@ -173,6 +234,7 @@ function userInfo(u) {
     key_hint: a.source === 'own' && a.key ? a.key.slice(-4) : null,
     model: a.model,
     effort: a.effort,
+    photo_token: photoToken(secret, u.id), // for <img src="api/photo/…?t=…">, refreshed on every /plants
   };
 }
 
@@ -239,24 +301,29 @@ async function plantnetIdentify(file, lang) {
 const actions = {
   async login(req, res) {
     const b = await readJson(req);
-    // A stale cached app.js may still send only {password}: that is the admin.
-    const login = normalizeLogin(b.login ?? config.adminLogin ?? 'admin');
+    const login = normalizeLogin(b.login);
+    const password = typeof b.password === 'string' ? b.password.slice(0, MAX_PASSWORD) : '';
+    rateLimit('login', clientIp(req));
+    if (login) rateLimit('login', `user:${login}`);
     const user = login ? getUserByLogin(db, login) : null;
-    if (!user || typeof b.password !== 'string' || !verifyPassword(b.password, user.pass_hash)) {
+    // Unknown login and wrong password take the same time (dummy scrypt), so logins cannot be enumerated.
+    if (!verifyPasswordOrDummy(password, user?.pass_hash) || !user) {
       await sleep(400);
       throw new HttpError(401, 'Nieprawidłowy login lub hasło.');
     }
     if (['pl', 'en'].includes(b.lang)) setUserLang(db, user.id, b.lang);
-    sendJson(res, 200, { token: createSession(db, user.id), user: userInfo(user) });
+    sendJson(res, 200, { token: createSession(db, user.id), user: userInfo(user) }, req);
   },
 
   // {login, password, invite} → new account + session. The code is an admin-made invite
   // (or config.inviteCode, which never runs out).
   async register(req, res) {
     const b = await readJson(req);
+    rateLimit('register', clientIp(req));
     const login = normalizeLogin(b.login);
     if (!login) throw new HttpError(400, 'Login: 3–32 znaki, małe litery, cyfry, kropka, myślnik lub podkreślenie.');
     if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+    if (b.password.length > MAX_PASSWORD) throw new HttpError(400, `Hasło może mieć najwyżej ${MAX_PASSWORD} znaków.`);
     if (getUserByLogin(db, login)) throw new HttpError(409, 'Ten login jest już zajęty.');
     const code = typeof b.invite === 'string' ? b.invite.trim() : '';
     const viaConfig = !!config.inviteCode && code && safeEqual(code, config.inviteCode);
@@ -266,18 +333,18 @@ const actions = {
     }
     const id = createUser(db, { login, password: b.password, invite_code: viaConfig ? null : code, anthropic_model: config.anthropicModel || null, anthropic_effort: config.anthropicEffort || null });
     setUserLang(db, id, b.lang === 'en' ? 'en' : 'pl');
-    sendJson(res, 200, { token: createSession(db, id), user: userInfo(getUser(db, id)) });
+    sendJson(res, 200, { token: createSession(db, id), user: userInfo(getUser(db, id)) }, req);
   },
 
   // ---- admin panel ----
   async admin(req, res, url) {
-    requireAdmin(req, url);
-    sendJson(res, 200, { users: listUsersAdmin(db), invites: listInvites(db), config_invite: !!config.inviteCode, global: globalInfo() });
+    requireAdmin(req);
+    sendJson(res, 200, { users: listUsersAdmin(db), invites: listInvites(db), config_invite: !!config.inviteCode, global: globalInfo() }, req);
   },
 
   // Global Claude key: {anthropic_key?: string|null, model?, effort?}. Users with use_global_key run on it.
   async adminglobal(req, res, url) {
-    requireAdmin(req, url);
+    requireAdmin(req);
     const b = await readJson(req);
     if (b.anthropic_key === null) setSetting(db, 'global_anthropic_key', null);
     else if (typeof b.anthropic_key === 'string' && b.anthropic_key.trim()) setSetting(db, 'global_anthropic_key', await checkedKey(b.anthropic_key));
@@ -289,12 +356,12 @@ const actions = {
       if (!EFFORTS.includes(b.effort)) throw new HttpError(400, 'Nieznany poziom analizy.');
       setSetting(db, 'global_effort', b.effort);
     }
-    sendJson(res, 200, { global: globalInfo() });
+    sendJson(res, 200, { global: globalInfo() }, req);
   },
 
   // {id, action: 'delete' | 'password' | 'admin' | 'unadmin', password?}
   async adminuser(req, res, url) {
-    const me = requireAdmin(req, url);
+    const me = requireAdmin(req);
     const b = await readJson(req);
     const id = Number(b.id);
     const target = getUser(db, id);
@@ -305,7 +372,7 @@ const actions = {
         deleteUser(db, id);
         break;
       case 'password':
-        if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+        if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD || b.password.length > MAX_PASSWORD) throw new HttpError(400, `Hasło: ${MIN_PASSWORD}–${MAX_PASSWORD} znaków.`);
         setUserPassword(db, id, b.password);
         deleteUserSessions(db, id);
         break;
@@ -326,12 +393,12 @@ const actions = {
       default:
         throw new HttpError(400, 'Nieznana akcja.');
     }
-    sendJson(res, 200, { users: listUsersAdmin(db) });
+    sendJson(res, 200, { users: listUsersAdmin(db) }, req);
   },
 
   // {action: 'create' | 'disable' | 'enable' | 'delete', code?, note?, max_uses?}
   async admininvite(req, res, url) {
-    const me = requireAdmin(req, url);
+    const me = requireAdmin(req);
     const b = await readJson(req);
     let code = null;
     switch (b.action) {
@@ -348,19 +415,19 @@ const actions = {
       default:
         throw new HttpError(400, 'Nieznana akcja.');
     }
-    sendJson(res, 200, { invites: listInvites(db), code });
+    sendJson(res, 200, { invites: listInvites(db), code }, req);
   },
 
   async logout(req, res, url) {
-    requireAuth(req, url);
-    deleteSession(db, requestToken(req, url));
-    sendJson(res, 200, { ok: true });
+    requireAuth(req);
+    deleteSession(db, requestToken(req));
+    sendJson(res, 200, { ok: true }, req);
   },
 
   // Account settings: {anthropic_key?, model?, effort?, password?, current_password?}.
   // anthropic_key: string = verify against Anthropic and store encrypted; null = remove.
   async account(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     if (['pl', 'en'].includes(b.lang)) setUserLang(db, u.id, b.lang);
     const ai = {};
@@ -378,26 +445,28 @@ const actions = {
     }
     if (Object.keys(ai).length) setUserAi(db, u.id, ai);
     if (b.password !== undefined) {
-      if (typeof b.current_password !== 'string' || !verifyPassword(b.current_password, u.pass_hash)) {
+      rateLimit('password', `user:${u.id}`);
+      if (typeof b.current_password !== 'string' || !verifyPassword(b.current_password.slice(0, MAX_PASSWORD), u.pass_hash)) {
         await sleep(400);
         throw new HttpError(401, 'Obecne hasło jest nieprawidłowe.');
       }
       if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) throw new HttpError(400, `Hasło musi mieć co najmniej ${MIN_PASSWORD} znaków.`);
+      if (b.password.length > MAX_PASSWORD) throw new HttpError(400, `Hasło może mieć najwyżej ${MAX_PASSWORD} znaków.`);
       setUserPassword(db, u.id, b.password);
-      deleteUserSessions(db, u.id, requestToken(req, url)); // other devices must log in again
+      deleteUserSessions(db, u.id, requestToken(req)); // other devices must log in again
     }
-    sendJson(res, 200, { user: userInfo(getUser(db, u.id)) });
+    sendJson(res, 200, { user: userInfo(getUser(db, u.id)) }, req);
   },
 
   async plants(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const info = userInfo(u);
-    sendJson(res, 200, { plants: listPlants(db, u.id), today: toDateString(), ai: info.has_key, user: info });
+    sendJson(res, 200, { plants: listPlants(db, u.id), today: toDateString(), ai: info.has_key, user: info }, req);
   },
 
   // Everything the profile view needs: plant, group care info, watering history, health checks.
   async plant(req, res, url, rest) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const id = Number(rest);
     const plant = myPlant(u, id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
@@ -408,13 +477,13 @@ const actions = {
       checks: listChecks(db, id),
       events: listEvents(db, id),
       ai: userInfo(u).has_key,
-    });
+    }, req);
   },
 
   // Care event: {plant_id, type, date?, note?, data?}. Repotting and moving also update the plant's
   // conditions (the interval follows); data.watered logs a watering on the same date.
   async event(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const id = Number(b.plant_id);
     const existing = getPlant(db, id, u.id);
@@ -442,22 +511,22 @@ const actions = {
       waterPlant(db, id, date ?? toDateString());
     }
     const eventId = insertEvent(db, { plant_id: id, type, ts: tsForDate(date), note, data });
-    sendJson(res, 200, { event: getEvent(db, eventId), plant: myPlant(u, id) });
+    sendJson(res, 200, { event: getEvent(db, eventId), plant: myPlant(u, id) }, req);
   },
 
   async unevent(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const plantId = deleteEvent(db, Number(b.event_id), u.id);
     if (!plantId) throw new HttpError(404, 'Nie ma takiego zdarzenia.');
-    sendJson(res, 200, { plant: myPlant(u, plantId) });
+    sendJson(res, 200, { plant: myPlant(u, plantId) }, req);
   },
 
   // Division: {id, name, pot_cm, pot_material, photo?, watered?, note?, date?} → a second plant with the same
   // species and care profile; both get a `split` event pointing at each other.
   async split(req, res, url) {
-    const u = requireAuth(req, url);
-    const b = await readJson(req);
+    const u = requireAuth(req);
+    const b = await readJson(req, JSON_PHOTO_LIMIT);
     const id = Number(b.id);
     const src = getPlant(db, id, u.id);
     if (!src) throw new HttpError(404, 'Nie ma takiej rośliny.');
@@ -495,14 +564,15 @@ const actions = {
     insertEvent(db, { plant_id: id, type: 'split', ts, note, data: { role: 'parent', sibling_id: childId, sibling_name: name, watered } });
     insertEvent(db, { plant_id: childId, type: 'split', ts, note, data: { role: 'child', sibling_id: id, sibling_name: src.name, watered } });
     const all = listPlants(db, u.id);
-    sendJson(res, 200, { plant: all.find((p) => p.id === childId), original: all.find((p) => p.id === id) });
+    sendJson(res, 200, { plant: all.find((p) => p.id === childId), original: all.find((p) => p.id === id) }, req);
   },
 
   // Claude analysis. Multipart: id, mode (checkup|doctor), text, image (new check) or parent_id + text (follow-up).
   async health(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const ai = aiFor(u);
     if (!ai) throw new HttpError(503, NO_KEY);
+    rateLimit('ai', `user:${u.id}`);
     const fd = await readMultipart(req);
     const id = Number(fd.get('id'));
     const plant = myPlant(u, id);
@@ -549,26 +619,27 @@ const actions = {
       plant_id: id, parent_id: parentId, mode, photos, user_text: text, result, model,
       input_tokens: usage?.input_tokens ?? null, output_tokens: usage?.output_tokens ?? null,
     });
-    sendJson(res, 200, { check: getCheck(db, checkId) });
+    sendJson(res, 200, { check: getCheck(db, checkId) }, req);
   },
 
   // Species care profile written by Claude, cached on the plant row. {id, refresh?}
   async profile(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const ai = aiFor(u);
     if (!ai) throw new HttpError(503, NO_KEY);
     const b = await readJson(req);
     const id = Number(b.id);
     const plant = myPlant(u, id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
-    if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true });
+    if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true }, req);
+    rateLimit('ai', `user:${u.id}`);
     const { result } = await describeSpecies(ai.client, ai.settings, { plant: withRecentEvents(plant), care: groupCare(plant.group_key), lang: langOf(req) });
     setProfile(db, id, JSON.stringify(result));
-    sendJson(res, 200, { profile: result, cached: false });
+    sendJson(res, 200, { profile: result, cached: false }, req);
   },
 
   async identify(req, res, url) {
-    requireAuth(req, url);
+    requireAuth(req);
     if (!config.plantnetApiKey) throw new HttpError(503, 'Brak klucza Pl@ntNet w config.js — wpisz nazwę rośliny ręcznie.');
     const fd = await readMultipart(req);
     const file = fd.get('image');
@@ -581,20 +652,20 @@ const actions = {
       if (e instanceof HttpError) throw e;
       throw new HttpError(502, 'Nie udało się połączyć z Pl@ntNet. Spróbuj ponownie albo wpisz nazwę ręcznie.');
     }
-    sendJson(res, 200, { results });
+    sendJson(res, 200, { results }, req);
   },
 
   async lookup(req, res, url) {
-    requireAuth(req, url);
+    requireAuth(req);
     const { species } = await readJson(req);
     const name = str(species, 120);
     if (!name) throw new HttpError(400, 'Podaj nazwę rośliny.');
-    sendJson(res, 200, { species: name, profile: matchProfile({ species: name }) });
+    sendJson(res, 200, { species: name, profile: matchProfile({ species: name }) }, req);
   },
 
   async save(req, res, url) {
-    const u = requireAuth(req, url);
-    const b = await readJson(req);
+    const u = requireAuth(req);
+    const b = await readJson(req, JSON_PHOTO_LIMIT);
     const id = b.id ? Number(b.id) : null;
     const existing = id ? getPlant(db, id, u.id) : null;
     if (id && !existing) throw new HttpError(404, 'Nie ma takiej rośliny.');
@@ -662,11 +733,11 @@ const actions = {
 
     updatePlant(db, plantId, plant);
     if (plant.last_watered && plant.last_watered !== existing?.last_watered) ensureWateringRow(db, plantId, plant.last_watered);
-    sendJson(res, 200, { plant: myPlant(u, plantId) });
+    sendJson(res, 200, { plant: myPlant(u, plantId) }, req);
   },
 
   async water(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const id = Number(b.id);
     if (!getPlant(db, id, u.id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
@@ -674,12 +745,12 @@ const actions = {
     if (!parseDateString(date)) throw new HttpError(400, 'Nieprawidłowa data.');
     const watering_id = waterPlant(db, id, date);
     const relaxed = learnFromWatering(db, id);
-    sendJson(res, 200, { plant: myPlant(u, id), watering_id, relaxed });
+    sendJson(res, 200, { plant: myPlant(u, id), watering_id, relaxed }, req);
   },
 
   // "Still wet": {id, days (1–7), note?} → reminder moved by `days`, logged as a snooze event.
   async postpone(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const id = Number(b.id);
     const plant = getPlant(db, id, u.id);
@@ -690,68 +761,72 @@ const actions = {
     const until = snoozePlant(db, id, days);
     insertEvent(db, { plant_id: id, type: 'snooze', note: str(b.note, 200), data: { days, until } });
     const learned = learnFromSnooze(db, id); // marks the event with `adjusted` when it tightened the plan
-    sendJson(res, 200, { plant: myPlant(u, id), until, learned });
+    sendJson(res, 200, { plant: myPlant(u, id), until, learned }, req);
   },
 
   // Removes one watering (undo, or a wrong entry in the history) and recomputes last_watered.
   async unwater(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const plantId = deleteWatering(db, Number(b.watering_id), u.id);
     if (!plantId) throw new HttpError(404, 'Nie ma takiego podlania.');
-    sendJson(res, 200, { plant: myPlant(u, plantId) });
+    sendJson(res, 200, { plant: myPlant(u, plantId) }, req);
   },
 
   async delete(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     const id = Number(b.id);
     if (!getPlant(db, id, u.id) || !deletePlant(db, id)) throw new HttpError(404, 'Nie ma takiej rośliny.');
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true }, req);
   },
 
   async vapid(req, res, url) {
-    requireAuth(req, url);
-    sendJson(res, 200, { publicKey: config.vapid?.publicKey || '' });
+    requireAuth(req);
+    sendJson(res, 200, { publicKey: config.vapid?.publicKey || '' }, req);
   },
 
   async subscribe(req, res, url) {
-    const u = requireAuth(req, url);
-    const b = await readJson(req);
+    const u = requireAuth(req);
+    const b = await readJson(req, PUSH_JSON_LIMIT);
     if (typeof b.endpoint !== 'string' || !b.endpoint.startsWith('https://') || !b.keys?.p256dh || !b.keys?.auth) {
       throw new HttpError(400, 'Nieprawidłowa subskrypcja push.');
     }
     upsertSub(db, { endpoint: b.endpoint, keys: { p256dh: String(b.keys.p256dh), auth: String(b.keys.auth) }, user_id: u.id });
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true }, req);
   },
 
   async unsubscribe(req, res, url) {
-    const u = requireAuth(req, url);
+    const u = requireAuth(req);
     const b = await readJson(req);
     if (typeof b.endpoint === 'string') deleteSub(db, b.endpoint, u.id);
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true }, req);
   },
 
+  // Loaded by <img>: authenticated with the photo token from userInfo (?t=…), or a session header from fetch().
   async photo(req, res, url, rest) {
-    const u = requireAuth(req, url);
-    if (!photoBelongsTo(db, rest, u.id)) throw new HttpError(404, 'Nie znaleziono.');
+    const userId = photoTokenUser(secret, url.searchParams.get('t')) ?? sessionUser(db, requestToken(req))?.id ?? null;
+    if (userId === null) throw new HttpError(401, 'Brak autoryzacji — zaloguj się ponownie.');
+    if (!photoBelongsTo(db, rest, userId)) throw new HttpError(404, 'Nie znaleziono.');
     const file = path.join(PHOTO_DIR, rest);
     if (!fs.existsSync(file)) throw new HttpError(404, 'Nie znaleziono.');
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)], 'Cache-Control': 'private, max-age=86400' });
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)], 'Cache-Control': 'private, max-age=86400', ...securityHeaders(req) });
     fs.createReadStream(file).pipe(res);
   },
 
   // Version of the frontend on disk; the running app compares it with its own APP_VERSION.
   async version(req, res) {
-    sendJson(res, 200, { version: appVersion });
+    sendJson(res, 200, { version: appVersion }, req);
   },
 
   // HTTP fallback for the daily reminder — protected by cronSecret, not by the login token.
+  // The secret may come in the X-Cron-Secret header (preferred: query strings land in access logs) or ?secret=.
   async cron(req, res, url) {
-    const secret = url.searchParams.get('secret') ?? '';
-    if (!config.cronSecret || !safeEqual(secret, config.cronSecret)) throw new HttpError(401, 'Nieprawidłowy sekret.');
+    rateLimit('cron', clientIp(req));
+    const given = String(req.headers['x-cron-secret'] ?? url.searchParams.get('secret') ?? '');
+    if (!config.cronSecret || !safeEqual(given, config.cronSecret)) throw new HttpError(401, 'Nieprawidłowy sekret.');
     const result = await runCron(config, db);
-    sendJson(res, 200, result);
+    sendJson(res, 200, result, req);
   },
 };
 
@@ -777,6 +852,8 @@ function serveStatic(req, res, pathname) {
     'Content-Type': MIME[ext] ?? 'application/octet-stream',
     'Cache-Control': isAsset ? 'public, max-age=86400' : 'no-cache',
     'Last-Modified': lastModified,
+    ...securityHeaders(req),
+    ...(ext === '.html' ? { 'Content-Security-Policy': CSP } : {}),
   };
   if (req.headers['if-modified-since'] === lastModified) {
     res.writeHead(304, headers);
@@ -811,7 +888,8 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = Number.isInteger(e?.status) && e.status >= 400 && e.status < 600 ? e.status : 500;
     if (status === 500) console.error(e);
-    sendJson(res, status, { error: translateMessage(status === 500 ? 'Błąd serwera.' : e.message, langOf(req)) });
+    if (e?.retryAfter) res.setHeader('Retry-After', String(e.retryAfter));
+    sendJson(res, status, { error: translateMessage(status === 500 ? 'Błąd serwera.' : e.message, langOf(req)) }, req);
   }
 });
 
@@ -846,7 +924,7 @@ async function main() {
   if (config.inviteCode) console.log('greenLy: config.inviteCode is set — it works as an unlimited invite next to the codes from the admin panel');
   if (process.env.GREENLY_FAKE_AI) console.log('greenLy: GREENLY_FAKE_AI — canned analyses for every user');
   const port = process.env.PORT !== undefined ? Number(process.env.PORT) : (config.port || 8080); // PORT=0 (tests) = any free port
-  server.listen(port, () => console.log(`greenLy listening on ${port}`));
+  server.listen(port, () => console.log(`greenLy listening on ${server.address().port}`));
 }
 
 main().catch((err) => {

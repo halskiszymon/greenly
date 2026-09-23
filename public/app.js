@@ -214,8 +214,9 @@ async function api(action, { json, form } = {}) {
   return data;
 }
 
+// Photos are <img> loads, so they carry a short-lived photo-only token (from /plants) instead of the session.
 function photoUrl(p) {
-  return p.photo ? `${p.photo}?t=${encodeURIComponent(state.token)}` : null;
+  return p.photo && state.user?.photo_token ? `${p.photo}?t=${encodeURIComponent(state.user.photo_token)}` : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +233,7 @@ function showLogin() {
 }
 
 function logout({ remote = true } = {}) {
-  if (remote && state.token) api('logout').catch(() => {});
+  if (remote && state.token) api('logout', { json: {} }).catch(() => {}); // POST: a bare api() call is a GET and the route is POST-only
   state.token = null;
   state.user = null;
   state.plants = [];
@@ -1366,7 +1367,7 @@ function renderResult(r) {
     ${r.watering ? `<p style="margin:8px 0 0"><b>${t('Podlewanie:')}</b> ${esc(r.watering)}</p>` : ''}`;
 }
 
-const photoSrc = (url) => `${url}?t=${encodeURIComponent(state.token)}`;
+const photoSrc = (url) => `${url}?t=${encodeURIComponent(state.user?.photo_token ?? '')}`;
 
 /** One row in the analyses list; details open in the sheet. */
 function renderCheck(c) {

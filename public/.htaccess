@@ -1,0 +1,13 @@
+# Applied by Apache when it serves these files. On Plesk with "serve static files directly by nginx"
+# enabled this file is bypassed — set the same headers in Plesk → Apache & nginx Settings →
+# Additional nginx directives (snippet in SECURITY_AUDIT.md).
+Options -Indexes
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  Header always set Strict-Transport-Security "max-age=15552000; includeSubDomains" env=HTTPS
+  # Report-Only first: watch the browser console for violations, then rename to Content-Security-Policy.
+  Header always set Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+</IfModule>

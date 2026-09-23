@@ -11,7 +11,7 @@ import {
   hashPassword, verifyPassword, normalizeLogin, createUser, getUser, getUserByLogin, countUsers, setUserAi, setUserPassword,
   createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
   setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
-  setUseGlobalKey, getSetting, setSetting,
+  setUseGlobalKey, getSetting, setSetting, sessionKey, photoToken, photoTokenUser, verifyPasswordOrDummy, PHOTO_TOKEN_TTL_MS,
 } from '../lib.js';
 
 loadCare();
@@ -204,4 +204,36 @@ test('settings and the global-key flag', () => {
   setUseGlobalKey(db, id, true);
   assert.equal(getUser(db, id).use_global_key, 1);
   assert.equal(listUsersAdmin(db)[0].use_global_key, true);
+});
+
+test('sessions are stored hashed; legacy raw rows still work and get upgraded', () => {
+  const db = openDb(tmp());
+  const id = createUser(db, { login: 'ala', password: 'password123' });
+  const t = createSession(db, id);
+  const stored = db.prepare('SELECT token FROM sessions').all().map((r) => r.token);
+  assert.deepEqual(stored, [sessionKey(t)]);
+  assert.notEqual(stored[0], t);
+  // a row written by the pre-hashing version
+  db.prepare("INSERT INTO sessions (token, user_id, created_at, last_seen) VALUES (?, ?, ?, ?)").run('a'.repeat(64), id, 'x', new Date().toISOString());
+  assert.equal(sessionUser(db, 'a'.repeat(64)).login, 'ala');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE token = ?').get(sessionKey('a'.repeat(64))).n, 1);
+  deleteSession(db, t);
+  assert.equal(sessionUser(db, t), null);
+});
+
+test('photo tokens: scoped to a user, expire, reject tampering', () => {
+  const t = photoToken('s', 7);
+  assert.equal(photoTokenUser('s', t), 7);
+  assert.equal(photoTokenUser('other', t), null);
+  assert.equal(photoTokenUser('s', t.replace(/^7\./, '8.')), null);
+  assert.equal(photoTokenUser('s', t, Date.now() + PHOTO_TOKEN_TTL_MS + 1), null);
+  assert.equal(photoTokenUser('s', 'garbage'), null);
+  assert.equal(photoTokenUser('s', 'a'.repeat(64)), null); // a session token is not a photo token
+});
+
+test('verifyPasswordOrDummy: false for an unknown user, still runs scrypt', () => {
+  const t0 = performance.now();
+  assert.equal(verifyPasswordOrDummy('x', null), false);
+  assert.ok(performance.now() - t0 > 2, 'dummy hash should cost about as much as a real check');
+  assert.equal(verifyPasswordOrDummy('password123', hashPassword('password123')), true);
 });

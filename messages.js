@@ -69,6 +69,9 @@ export const MESSAGES_EN = {
   'Nieczytelna odpowiedź modelu — spróbuj ponownie.': 'Unreadable model answer — try again.',
   patterns: [
     [/^Hasło musi mieć co najmniej (\d+) znaków\.$/, (m) => `The password needs at least ${m[1]} characters.`],
+    [/^Hasło może mieć najwyżej (\d+) znaków\.$/, (m) => `The password can have at most ${m[1]} characters.`],
+    [/^Hasło: (\d+)–(\d+) znaków\.$/, (m) => `Password: ${m[1]}–${m[2]} characters.`],
+    [/^Za dużo prób\. Spróbuj ponownie za (\d+) min\.$/, (m) => `Too many attempts. Try again in ${m[1]} min.`],
     [/^Maksymalnie (\d+) zdjęcia na jedną analizę\.$/, (m) => `At most ${m[1]} photos per analysis.`],
     [/^Zdjęcie jest za duże \(limit (\d+) KB\)\.$/, (m) => `The photo is too large (${m[1]} KB limit).`],
     [/^Pl@ntNet zwrócił błąd (\d+)\.$/, (m) => `Pl@ntNet returned error ${m[1]}.`],
