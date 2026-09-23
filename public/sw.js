@@ -1,11 +1,11 @@
 // sw.js — offline shell cache + web push. API calls always go to the network.
-const CACHE = 'greenly-shell-v13';
+const CACHE = 'greenly-shell-v14';
 // Shell files are fetched network-first so an installed PWA runs the latest deploy on every open;
 // the cache is the offline fallback. Everything else (icons) is cache-first with a background refresh.
-const SHELL_PATHS = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest'];
+const SHELL_PATHS = ['/', '/index.html', '/app.js', '/i18n.js', '/styles.css', '/manifest.webmanifest'];
 const NETWORK_TIMEOUT_MS = 4000;
 // Core shell: install fails if any of these is missing (the app cannot work without them).
-const SHELL = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest'];
+const SHELL = ['./', './index.html', './app.js', './i18n.js', './styles.css', './manifest.webmanifest'];
 // Best-effort extras: a missing icon must never block installation (a stuck install
 // leaves navigator.serviceWorker.ready pending forever, which breaks push setup).
 const EXTRAS = ['./img/icon-192.png', './img/icon-512.png'];

@@ -4,15 +4,16 @@
 
 import { fileURLToPath } from 'node:url';
 import webpush from 'web-push';
-import { openDb, loadConfig, loadCare, duePlants, listSubs, deleteSub, markNotified } from './lib.js';
+import { openDb, loadConfig, loadCare, duePlants, listSubs, deleteSub, markNotified, getUser } from './lib.js';
 
-function buildPayload(plants, appUrl) {
+function buildPayload(plants, appUrl, lang = 'pl') {
+  const en = lang === 'en';
   if (plants.length === 1) {
     const p = plants[0];
-    return { title: `Czas podlać: ${p.name}`, body: p.group_note, url: appUrl, tag: 'greenly-water' };
+    return { title: en ? `Time to water: ${p.name}` : `Czas podlać: ${p.name}`, body: p.group_note, url: appUrl, tag: 'greenly-water' };
   }
   const names = plants.map((p) => p.name).join(', ');
-  return { title: `Do podlania: ${plants.length}`, body: names, url: appUrl, tag: 'greenly-water' };
+  return { title: en ? `To water: ${plants.length}` : `Do podlania: ${plants.length}`, body: names, url: appUrl, tag: 'greenly-water' };
 }
 
 function isSubscriptionExpired(err) {
@@ -39,7 +40,7 @@ export async function runCron(config, db) {
     byUser.get(p.user_id).push(p);
   }
   for (const [userId, mine] of byUser) {
-    const payload = JSON.stringify(buildPayload(mine, config.appUrl || '/'));
+    const payload = JSON.stringify(buildPayload(mine, config.appUrl || '/', getUser(db, userId)?.lang || 'pl'));
     for (const sub of listSubs(db, userId)) {
       const pushSub = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
       try {

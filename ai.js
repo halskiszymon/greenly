@@ -97,8 +97,10 @@ export const PROFILE_SCHEMA = {
 // prompts
 // ---------------------------------------------------------------------------
 
+const LANG_LINE = { pl: 'Odpowiadasz po polsku.', en: 'Answer in English (every field of the JSON, including titles and questions).' };
+
 const SYSTEM_HEALTH = `Jesteś doświadczonym ogrodnikiem specjalizującym się w roślinach doniczkowych w polskich mieszkaniach.
-Oceniasz stan rośliny na podstawie zdjęcia i podanych warunków. Odpowiadasz po polsku, konkretnie i praktycznie.
+Oceniasz stan rośliny na podstawie zdjęcia i podanych warunków. {LANG} Piszesz konkretnie i praktycznie.
 Zasady:
 - Opisuj tylko to, co faktycznie widać na zdjęciu, i łącz to z warunkami (doniczka, światło, podlewanie, pora roku).
 - Nie zgaduj chorób, których nie widać. Każdemu spostrzeżeniu przypisz uczciwą pewność.
@@ -108,7 +110,7 @@ Zasady:
 - Pole "status": healthy = w porządku, watch = drobne sygnały do obserwacji, sick = wyraźny problem wymagający działania.`;
 
 const SYSTEM_PROFILE = `Jesteś doświadczonym ogrodnikiem. Piszesz zwięzły, praktyczny profil pielęgnacyjny rośliny doniczkowej dla osoby mieszkającej w Polsce (ogrzewanie zimą, krótkie dni, suche powietrze).
-Odpowiadasz po polsku. Każde pole to 1–3 zdania, konkretnie: liczby, kierunki okien, częstotliwości. Pole "pets": czy roślina jest trująca dla kotów/psów. Pole "common_problems": 3–5 najczęstszych problemów w formie „objaw → przyczyna”.`;
+{LANG} Każde pole to 1–3 zdania, konkretnie: liczby, kierunki okien, częstotliwości. Pole "pets": czy roślina jest trująca dla kotów/psów. Pole "common_problems": 3–5 najczęstszych problemów w formie „objaw → przyczyna”.`;
 
 function daysSince(dateStr, today) {
   if (!dateStr) return null;
@@ -170,7 +172,7 @@ function imageBlock(image) {
  * @param {Array<{data:string, mediaType:string}>} o.images   root photos (base64), 1–4
  * @param {Array<{user_text:string, result:object}>} o.chain   previous rounds, oldest first (empty for a new check)
  */
-export function buildHealthMessages({ plant, care, mode, userText, images = [], image, chain = [], today = new Date() }) {
+export function buildHealthMessages({ plant, care, mode, userText, images = [], image, chain = [], today = new Date(), lang = 'pl' }) {
   if (image && !images.length) images = [image];
   const task = mode === 'doctor'
     ? `Tryb DOKTOR. Właściciel uważa, że z rośliną jest coś nie tak. Jego opis: "${userText || 'brak opisu'}".
@@ -194,12 +196,12 @@ Pole "questions" zostaw puste.`;
     const next = i + 1 < chain.length ? chain[i + 1].user_text : userText;
     messages.push({ role: 'user', content: `Odpowiedzi właściciela na pytania: "${next}"\nZaktualizuj ocenę. Jeśli nadal czegoś brakuje, zadaj kolejne pytania, w przeciwnym razie zostaw "questions" puste.` });
   }
-  return { system: SYSTEM_HEALTH, messages };
+  return { system: SYSTEM_HEALTH.replace('{LANG}', LANG_LINE[lang] ?? LANG_LINE.pl), messages };
 }
 
-export function buildProfileMessages({ plant, care, today = new Date() }) {
+export function buildProfileMessages({ plant, care, today = new Date(), lang = 'pl' }) {
   return {
-    system: SYSTEM_PROFILE,
+    system: SYSTEM_PROFILE.replace('{LANG}', LANG_LINE[lang] ?? LANG_LINE.pl),
     messages: [{
       role: 'user',
       content: `${plantContext(plant, care, today)}\n\nNapisz profil pielęgnacyjny tego gatunku. Odnieś się do podanych warunków tam, gdzie coś wyraźnie nie pasuje (np. zbyt ciemno dla tego gatunku).`,

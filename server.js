@@ -18,8 +18,9 @@ import {
   normalizeLogin, MIN_PASSWORD, verifyPassword, createUser, getUser, getUserByLogin, setUserPassword, setUserAi,
   createSession, sessionUser, deleteSession, deleteUserSessions, encryptSecret, decryptSecret, loadSecret, ensureAdmin,
   setAdmin, countAdmins, listUsersAdmin, deleteUser, createInvite, listInvites, setInviteDisabled, deleteInvite, consumeInvite,
-  setUseGlobalKey, getSetting, setSetting,
+  setUseGlobalKey, getSetting, setSetting, setUserLang,
 } from './lib.js';
+import { MESSAGES_EN } from './messages.js';
 import { runCron } from './cron.js';
 import { createClient as createAiClient, analyzeHealth, describeSpecies, describeEvent, verifyKey, MODELS, EFFORTS, DEFAULT_MODEL, DEFAULT_EFFORT } from './ai.js';
 
@@ -52,6 +53,22 @@ const MIME = {
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
+}
+
+/** Client language from the X-Lang header (the frontend sends its UI language). */
+function langOf(req) {
+  return String(req.headers['x-lang'] ?? '').toLowerCase().startsWith('en') ? 'en' : 'pl';
+}
+
+/** Error messages are written in Polish; English clients get them through messages.js. */
+function translateMessage(message, lang) {
+  if (lang !== 'en') return message;
+  if (MESSAGES_EN[message]) return MESSAGES_EN[message];
+  for (const [pattern, fn] of MESSAGES_EN.patterns) {
+    const m = pattern.exec(message);
+    if (m) return fn(m);
+  }
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +246,7 @@ const actions = {
       await sleep(400);
       throw new HttpError(401, 'Nieprawidłowy login lub hasło.');
     }
+    if (['pl', 'en'].includes(b.lang)) setUserLang(db, user.id, b.lang);
     sendJson(res, 200, { token: createSession(db, user.id), user: userInfo(user) });
   },
 
@@ -247,6 +265,7 @@ const actions = {
       throw new HttpError(403, 'Nieprawidłowy albo wykorzystany kod zaproszenia.');
     }
     const id = createUser(db, { login, password: b.password, invite_code: viaConfig ? null : code, anthropic_model: config.anthropicModel || null, anthropic_effort: config.anthropicEffort || null });
+    setUserLang(db, id, b.lang === 'en' ? 'en' : 'pl');
     sendJson(res, 200, { token: createSession(db, id), user: userInfo(getUser(db, id)) });
   },
 
@@ -343,6 +362,7 @@ const actions = {
   async account(req, res, url) {
     const u = requireAuth(req, url);
     const b = await readJson(req);
+    if (['pl', 'en'].includes(b.lang)) setUserLang(db, u.id, b.lang);
     const ai = {};
     const touchesAi = b.anthropic_key !== undefined || b.model !== undefined || b.effort !== undefined;
     if (touchesAi && u.use_global_key) throw new HttpError(400, 'Twoje konto korzysta z globalnego klucza Claude — te ustawienia zmienia administrator.');
@@ -522,7 +542,7 @@ const actions = {
     }
 
     const { result, usage, model } = await analyzeHealth(ai.client, ai.settings, {
-      plant: withRecentEvents(plant), care: groupCare(plant.group_key), mode, userText: text, images, chain,
+      plant: withRecentEvents(plant), care: groupCare(plant.group_key), mode, userText: text, images, chain, lang: langOf(req),
     });
     const photos = uploads.map((u) => storePhotoBuffer(u.buf, u.mediaType, id));
     const checkId = insertCheck(db, {
@@ -542,7 +562,7 @@ const actions = {
     const plant = myPlant(u, id);
     if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
     if (plant.profile && !b.refresh) return sendJson(res, 200, { profile: plant.profile, cached: true });
-    const { result } = await describeSpecies(ai.client, ai.settings, { plant: withRecentEvents(plant), care: groupCare(plant.group_key) });
+    const { result } = await describeSpecies(ai.client, ai.settings, { plant: withRecentEvents(plant), care: groupCare(plant.group_key), lang: langOf(req) });
     setProfile(db, id, JSON.stringify(result));
     sendJson(res, 200, { profile: result, cached: false });
   },
@@ -791,7 +811,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     const status = Number.isInteger(e?.status) && e.status >= 400 && e.status < 600 ? e.status : 500;
     if (status === 500) console.error(e);
-    sendJson(res, status, { error: status === 500 ? 'Błąd serwera.' : e.message });
+    sendJson(res, status, { error: translateMessage(status === 500 ? 'Błąd serwera.' : e.message, langOf(req)) });
   }
 });
 

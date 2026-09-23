@@ -3,29 +3,31 @@
 // Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
 // (test/version.test.mjs checks they match). The server reads this constant from the file and
 // the running app compares it with /api/version to offer a reload after a deploy.
-export const APP_VERSION = '13';
+export const APP_VERSION = '14';
+
+import { t, lang, setLang, plural, locale, translateDom } from './i18n.js';
 
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';
 
 // The pot that holds the roots is what matters; a decorative cachepot only counts when water stays in it.
 const MATERIALS = [
-  ['terracotta', 'Terakota / glina niepolewana — szybko wysycha'],
-  ['ceramic', 'Ceramika szkliwiona'],
-  ['plastic', 'Plastik z otworami (także w osłonce)'],
-  ['cachepot', 'Bez otworów odpływowych — woda nie odpływa'],
+  ['terracotta', t('Terakota / glina niepolewana — szybko wysycha')],
+  ['ceramic', t('Ceramika szkliwiona')],
+  ['plastic', t('Plastik z otworami (także w osłonce)')],
+  ['cachepot', t('Bez otworów odpływowych — woda nie odpływa')],
 ];
 const LIGHTS = [
-  ['sun', 'Pełne słońce — parapet S/W, słońce na liściach'],
-  ['bright', 'Jasno, bez ostrego słońca — przy oknie E/N'],
-  ['partial', 'Półcień — 1–2 m od okna'],
-  ['dark', 'Ciemny kąt — daleko od okna'],
+  ['sun', t('Pełne słońce — parapet S/W, słońce na liściach')],
+  ['bright', t('Jasno, bez ostrego słońca — przy oknie E/N')],
+  ['partial', t('Półcień — 1–2 m od okna')],
+  ['dark', t('Ciemny kąt — daleko od okna')],
 ];
 const LEVEL_LABEL = {
-  species: 'profil gatunku',
-  genus: 'profil rodzaju',
-  family: 'profil rodziny',
-  universal: 'profil uniwersalny',
+  species: t('profil gatunku'),
+  genus: t('profil rodzaju'),
+  family: t('profil rodziny'),
+  universal: t('profil uniwersalny'),
 };
 
 // ---------------------------------------------------------------------------
@@ -126,9 +128,9 @@ function esc(s) {
 }
 
 function dni(n) {
-  n = Math.abs(n);
-  return n === 1 ? 'dzień' : 'dni';
+  return plural(n, ['dzień', 'dni', 'dni'], ['day', 'days']);
 }
+const days = (n) => `${Math.abs(n)} ${dni(n)}`;
 
 function todayStr() {
   const d = new Date();
@@ -175,8 +177,8 @@ function validate(rules) {
 }
 const required = (msg) => (v) => (v ? null : msg);
 const LOGIN_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/i;
-const loginRule = (v) => (!v ? 'Wpisz login.' : LOGIN_RE.test(v) ? null : '3–32 znaki: litery, cyfry, kropka, myślnik lub podkreślenie.');
-const passwordRule = (v) => (!v ? 'Wpisz hasło.' : v.length < 8 ? 'Hasło musi mieć co najmniej 8 znaków.' : null);
+const loginRule = (v) => (!v ? t('Wpisz login.') : LOGIN_RE.test(v) ? null : t('3–32 znaki: litery, cyfry, kropka, myślnik lub podkreślenie.'));
+const passwordRule = (v) => (!v ? t('Wpisz hasło.') : v.length < 8 ? t('Hasło musi mieć co najmniej 8 znaków.') : null);
 
 /** Server-side messages that clearly belong to one field land under it instead of a toast. */
 function serverFieldError(msg, map) {
@@ -191,7 +193,7 @@ const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
 // api
 // ---------------------------------------------------------------------------
 async function api(action, { json, form } = {}) {
-  const headers = {};
+  const headers = { 'X-Lang': lang }; // server-side messages come back in this language
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   let body;
   if (json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
@@ -200,15 +202,15 @@ async function api(action, { json, form } = {}) {
   try {
     res = await fetch(API + action, { method: body === undefined ? 'GET' : 'POST', headers, body });
   } catch {
-    throw new Error('Brak połączenia z serwerem.');
+    throw new Error(t('Brak połączenia z serwerem.'));
   }
   let data = {};
   try { data = await res.json(); } catch { /* non-JSON */ }
   if (res.status === 401 && action !== 'login' && action !== 'register' && action !== 'account') {
     logout({ remote: false });
-    throw new Error(data.error || 'Sesja wygasła — zaloguj się ponownie.');
+    throw new Error(data.error || t('Sesja wygasła — zaloguj się ponownie.'));
   }
-  if (!res.ok) throw new Error(data.error || `Błąd ${res.status}`);
+  if (!res.ok) throw new Error(data.error || t('Błąd {n}', { n: res.status }));
   return data;
 }
 
@@ -225,6 +227,7 @@ function showLogin() {
   el.app.hidden = true;
   el.plantView.hidden = true;
   el.actions.hidden = true;
+  $('.topbar').hidden = true; // the auth screens carry their own branding
   setAuthTab(localStorage.getItem(SEEN_KEY) ? 'login' : 'start');
 }
 
@@ -255,7 +258,8 @@ function openMenu() {
   const u = state.user;
   $('#menu-login').textContent = u?.login ?? '…';
   $('#menu-avatar').textContent = (u?.login ?? '?').slice(0, 1);
-  $('#menu-role').textContent = u?.is_admin ? 'administrator' : 'użytkownik';
+  $('#menu-role').textContent = u?.is_admin ? t('administrator') : t('użytkownik');
+  $('#menu-lang-state').textContent = lang === 'pl' ? '🇵🇱 PL' : '🇬🇧 EN';
   $('#btn-admin').hidden = !u?.is_admin;
   el.menuBackdrop.hidden = false;
   el.menu.hidden = false;
@@ -279,8 +283,19 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(
 $('#menu-home').addEventListener('click', closeMenu);
 $('#btn-admin').addEventListener('click', () => { closeMenu(); openAdmin(); });
 $('#btn-install').addEventListener('click', () => { closeMenu(); openInstall(); });
-$('#btn-refresh').addEventListener('click', () => { closeMenu(); toast('Odświeżam…'); hardRefresh(); });
+$('#btn-refresh').addEventListener('click', () => { closeMenu(); toast(t('Odświeżam…')); hardRefresh(); });
 $('#btn-logout').addEventListener('click', () => logout());
+$('#btn-lang').addEventListener('click', () => switchLang(lang === 'pl' ? 'en' : 'pl'));
+
+/** Language change re-renders everything, so it is a reload (the choice is remembered). */
+function switchLang(next) {
+  setLang(next);
+  if (state.user) api('account', { json: { lang: next } }).catch(() => {}); // for push notifications
+  location.reload();
+}
+const langSelect = $('#lang-select');
+langSelect.value = lang;
+langSelect.addEventListener('change', () => { if (langSelect.value !== lang) switchLang(langSelect.value); });
 
 function setAuthTab(tab) {
   for (const b of $('#auth-tabs').children) {
@@ -316,15 +331,15 @@ $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const user = $('#login-user');
   const pass = $('#login-password');
-  if (!validate([[user, required('Wpisz login.')], [pass, required('Wpisz hasło.')]])) return;
+  if (!validate([[user, required(t('Wpisz login.'))], [pass, required(t('Wpisz hasło.'))]])) return;
   const btn = e.target.querySelector('button');
   btn.disabled = true;
   try {
-    const data = await api('login', { json: { login: user.value.trim(), password: pass.value } });
+    const data = await api('login', { json: { login: user.value.trim(), password: pass.value, lang } });
     pass.value = '';
     await startSession(data);
   } catch (err) {
-    if (!serverFieldError(err.message, [['hasło', pass]])) toast(err.message, 'error');
+    if (!serverFieldError(err.message, [['hasło', pass], ['password', pass]])) toast(err.message, 'error');
   } finally {
     btn.disabled = false;
   }
@@ -335,17 +350,17 @@ $('#register-form').addEventListener('submit', async (e) => {
   const user = $('#reg-user');
   const pass = $('#reg-password');
   const invite = $('#reg-invite');
-  if (!validate([[user, loginRule], [pass, passwordRule], [invite, required('Wpisz kod zaproszenia.')]])) return;
+  if (!validate([[user, loginRule], [pass, passwordRule], [invite, required(t('Wpisz kod zaproszenia.'))]])) return;
   const btn = e.target.querySelector('button');
   btn.disabled = true;
   try {
-    const data = await api('register', { json: { login: user.value.trim(), password: pass.value, invite: invite.value.trim() } });
+    const data = await api('register', { json: { login: user.value.trim(), password: pass.value, invite: invite.value.trim(), lang } });
     pass.value = '';
     invite.value = '';
-    toast(`Witaj, ${data.user.login}!`);
+    toast(t('Witaj, {name}!', { name: data.user.login }));
     await startSession(data, { fresh: true });
   } catch (err) {
-    if (!serverFieldError(err.message, [['login', user], ['kod', invite], ['hasło', pass]])) toast(err.message, 'error', 5000);
+    if (!serverFieldError(err.message, [['login', user], ['kod', invite], ['invite', invite], ['hasło', pass], ['password', pass]])) toast(err.message, 'error', 5000);
   } finally {
     btn.disabled = false;
   }
@@ -359,6 +374,7 @@ $('#btn-account').addEventListener('click', () => { closeMenu(); openAccount(); 
 async function enterApp({ fresh = false } = {}) {
   el.login.hidden = true;
   el.actions.hidden = false;
+  $('.topbar').hidden = false;
   el.iosHint.hidden = !(isIOS && !isStandalone);
   // Paint from the cache first, pick the view synchronously, then let the network patch things.
   const cached = cacheGet('plants');
@@ -390,12 +406,12 @@ async function refresh() {
 
 /** Status line. On the list a due plant shows the amount instead of the interval (the card is narrow). */
 function metaText(p, { list = false } = {}) {
-  const every = ` · co ${p.interval} ${dni(p.interval)}`;
-  const tail = list && p.water_ml ? ` · ok. ${p.water_ml} ml` : every;
-  if (p.days_left === null) return 'Brak daty podlania' + every;
-  if (p.days_left > 0) return `${p.snoozed ? 'Odłożone · za' : 'Za'} ${p.days_left} ${dni(p.days_left)}` + every;
-  if (p.days_left === 0) return 'Dziś' + tail;
-  return `Spóźnione o ${-p.days_left} ${dni(p.days_left)}` + tail;
+  const every = ` · ${t('co {n}', { n: days(p.interval) })}`;
+  const tail = list && p.water_ml ? ` · ${t('ok. {ml} ml', { ml: p.water_ml })}` : every;
+  if (p.days_left === null) return t('Brak daty podlania') + every;
+  if (p.days_left > 0) return `${t(p.snoozed ? 'Odłożone · za' : 'Za')} ${days(p.days_left)}` + every;
+  if (p.days_left === 0) return t('Dziś') + tail;
+  return t('Spóźnione o {n}', { n: days(p.days_left) }) + tail;
 }
 const isDue = (p) => p.days_left !== null && p.days_left <= 0;
 
@@ -414,6 +430,7 @@ function renderList({ animate = true } = {}) {
     let li = existing.get(p.id);
     if (!li) {
       li = tpl.content.firstElementChild.cloneNode(true);
+      translateDom(li);
       li.dataset.id = p.id;
       li.querySelector('.plant-main').addEventListener('click', () => { location.hash = `plant/${p.id}`; });
       li.querySelector('.btn-water').addEventListener('click', () => water(p.id, li));
@@ -433,7 +450,7 @@ function renderList({ animate = true } = {}) {
     const fill = li.querySelector('.bar-fill');
     const pct = fillPercent(p);
     bar.classList.toggle('unknown', p.days_left === null);
-    bar.setAttribute('aria-label', `Wilgotność ${Math.round(pct)}%`);
+    bar.setAttribute('aria-label', t('Wilgotność {pct}%', { pct: Math.round(pct) }));
     fill.classList.toggle('low', pct < 20);
     // Force a layout pass first so the width transition also runs for freshly created cards.
     if (animate && !existing.has(p.id)) fill.getBoundingClientRect();
@@ -459,18 +476,18 @@ function stopUndo(btn) {
   btn._undo = null;
   delete btn.dataset.wateringId;
   btn.classList.remove('undo');
-  btn.textContent = 'Podlej';
+  btn.textContent = t('Podlej');
 }
 
 function startUndo(btn, wateringId, onExpire) {
   btn.dataset.wateringId = String(wateringId);
   btn.classList.add('undo');
   let left = UNDO_MS / 1000;
-  btn.innerHTML = `<span class="undo-fill" style="animation-duration:${UNDO_MS}ms"></span><span class="undo-label">Cofnij · ${left}</span>`;
+  btn.innerHTML = `<span class="undo-fill" style="animation-duration:${UNDO_MS}ms"></span><span class="undo-label">${t('Cofnij · {s}', { s: left })}</span>`;
   const iv = setInterval(() => {
     left = Math.max(1, left - 1);
     const l = btn.querySelector('.undo-label');
-    if (l) l.textContent = `Cofnij · ${left}`;
+    if (l) l.textContent = t('Cofnij · {s}', { s: left });
   }, 1000);
   const to = setTimeout(() => { stopUndo(btn); onExpire(); }, UNDO_MS);
   btn._undo = { iv, to };
@@ -488,7 +505,7 @@ async function waterWithUndo(plantId, btn, h) {
     btn.disabled = true;
     try {
       const { plant } = await api('unwater', { json: { watering_id: wateringId } });
-      toast('Cofnięto podlanie.');
+      toast(t('Cofnięto podlanie.'));
       h.onSettled(plant, true);
     } catch (err) {
       toast(err.message, 'error');
@@ -517,7 +534,7 @@ async function water(id, li) {
     onWatered(plant) {
       put(plant);
       renderListInPlace(plant, li); // animate the bar in place; re-sort once the undo window closes
-      toast(`Podlano: ${plant.name}`);
+      toast(t('Podlano: {name}', { name: plant.name }));
     },
     onSettled(plant, undone) {
       if (plant) { put(plant); if (undone) renderListInPlace(plant, li); }
@@ -644,20 +661,20 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !el.shee
 $('#btn-add').addEventListener('click', openAdd);
 
 function openAdd() {
-  openSheet('Nowa roślina');
+  openSheet(t('Nowa roślina'));
   el.sheetBody.innerHTML = `
     <div class="identify">
       <div class="photo-pick">
-        <button type="button" class="btn btn-primary" tabindex="-1">Zrób zdjęcie / wybierz z galerii</button>
-        <input type="file" accept="image/*" id="photo-input" aria-label="Zdjęcie rośliny">
+        <button type="button" class="btn btn-primary" tabindex="-1">${t('Zrób zdjęcie / wybierz z galerii')}</button>
+        <input type="file" accept="image/*" id="photo-input" aria-label="${t('Zdjęcie rośliny')}">
       </div>
-      <img class="photo-preview" id="photo-preview" alt="Podgląd zdjęcia" hidden>
+      <img class="photo-preview" id="photo-preview" alt="${t('Podgląd zdjęcia')}" hidden>
       <p class="status" id="identify-status"></p>
       <ul class="results" id="results"></ul>
-      <div class="divider">albo</div>
+      <div class="divider">${t('albo')}</div>
       <form class="manual" id="manual-form">
-        <input type="text" id="manual-name" placeholder="Wpiszę nazwę sam, np. Monstera deliciosa" aria-label="Nazwa łacińska lub potoczna" autocomplete="off">
-        <button type="submit" class="btn btn-primary">Dalej</button>
+        <input type="text" id="manual-name" placeholder="${t('Wpiszę nazwę sam, np. Monstera deliciosa')}" aria-label="${t('Nazwa łacińska lub potoczna')}" autocomplete="off">
+        <button type="submit" class="btn btn-primary">${t('Dalej')}</button>
       </form>
     </div>`;
 
@@ -669,7 +686,7 @@ function openAdd() {
     const status = $('#identify-status');
     const results = $('#results');
     results.replaceChildren();
-    status.textContent = 'Przygotowuję zdjęcie…';
+    status.textContent = t('Przygotowuję zdjęcie…');
     try {
       const { upload, thumb, full } = await processImage(file);
       draft.thumb = thumb;
@@ -677,14 +694,14 @@ function openAdd() {
       const preview = $('#photo-preview');
       preview.src = thumb;
       preview.hidden = false;
-      status.textContent = 'Rozpoznaję przez Pl@ntNet…';
+      status.textContent = t('Rozpoznaję przez Pl@ntNet…');
       const form = new FormData();
       form.append('image', upload, 'photo.jpg');
       const { results: list } = await api('identify', { form });
-      status.textContent = list.length ? 'Wybierz właściwe trafienie:' : 'Brak trafień — wpisz nazwę ręcznie.';
+      status.textContent = list.length ? t('Wybierz właściwe trafienie:') : t('Brak trafień — wpisz nazwę ręcznie.');
       renderResults(list, draft);
     } catch (err) {
-      status.textContent = err.message + ' Możesz wpisać nazwę ręcznie poniżej.';
+      status.textContent = err.message + ' ' + t('Możesz wpisać nazwę ręcznie poniżej.');
       status.classList.add('is-error');
     }
   });
@@ -768,7 +785,7 @@ async function processImage(file) {
 function openEdit(id) {
   const p = state.plants.find((x) => x.id === id);
   if (!p) return;
-  openSheet('Edycja rośliny');
+  openSheet(t('Edycja rośliny'));
   openForm({
     id: p.id,
     species: p.species,
@@ -798,49 +815,49 @@ function openForm(ctx) {
       </div>
     </div>
     <div class="photo-actions">
-      <span class="btn pick">${photoSrc ? 'Zmień zdjęcie' : 'Dodaj zdjęcie'}<input type="file" accept="image/*" id="form-photo" aria-label="Zdjęcie rośliny"></span>
-      <button type="button" class="btn btn-ghost" id="form-photo-remove" ${photoSrc ? '' : 'hidden'}>Usuń zdjęcie</button>
+      <span class="btn pick">${t(photoSrc ? 'Zmień zdjęcie' : 'Dodaj zdjęcie')}<input type="file" accept="image/*" id="form-photo" aria-label="${t('Zdjęcie rośliny')}"></span>
+      <button type="button" class="btn btn-ghost" id="form-photo-remove" ${photoSrc ? '' : 'hidden'}>${t('Usuń zdjęcie')}</button>
     </div>
     <div class="preview" id="preview" aria-live="polite">
       <strong id="preview-days"></strong>
-      w tych warunkach, o tej porze roku
+      ${t('w tych warunkach, o tej porze roku')}
       <span class="chip level-${esc(ctx.profile.level)}">${esc(ctx.profile.label)} · ${LEVEL_LABEL[ctx.profile.level]}</span>
       <div class="note">${esc(ctx.profile.note)}</div>
     </div>
     <form id="plant-form" autocomplete="off">
       <div class="field">
-        <label for="f-name">Nazwa własna</label>
+        <label for="f-name">${t('Nazwa własna')}</label>
         <input type="text" id="f-name" name="name" maxlength="80" required value="${esc(defaultName)}">
       </div>
       <div class="field">
-        <label for="f-pot">Średnica doniczki: <span class="range-value" id="pot-value">${v.pot_cm ?? 15}</span> cm</label>
+        <label for="f-pot">${t('Średnica doniczki')}: <span class="range-value" id="pot-value">${v.pot_cm ?? 15}</span> cm</label>
         <input type="range" id="f-pot" name="pot_cm" min="6" max="40" step="1" value="${v.pot_cm ?? 15}">
       </div>
       <div class="field-row">
         <div class="field">
-          <label for="f-material">Doniczka</label>
+          <label for="f-material">${t('Doniczka')}</label>
           <select id="f-material" name="pot_material">${options(MATERIALS, v.pot_material ?? 'ceramic')}</select>
         </div>
         <div class="field">
-          <label for="f-light">Światło</label>
+          <label for="f-light">${t('Światło')}</label>
           <select id="f-light" name="light">${options(LIGHTS, v.light ?? 'bright')}</select>
         </div>
       </div>
-      <p class="hint">Liczy się doniczka, w której są korzenie. Osłonka nie ma znaczenia — chyba że po podlaniu zostaje w niej woda, wtedy wybierz „bez otworów”.</p>
+      <p class="hint">${t('Liczy się doniczka, w której są korzenie. Osłonka nie ma znaczenia — chyba że po podlaniu zostaje w niej woda, wtedy wybierz „bez otworów”.')}</p>
       <div class="field">
-        <label class="check"><input type="checkbox" id="f-dry" name="dry_air" ${v.dry_air ? 'checked' : ''}> Suche powietrze / blisko grzejnika</label>
+        <label class="check"><input type="checkbox" id="f-dry" name="dry_air" ${v.dry_air ? 'checked' : ''}> ${t('Suche powietrze / blisko grzejnika')}</label>
       </div>
       <div class="field">
-        <label for="f-last">Ostatnie podlanie</label>
+        <label for="f-last">${t('Ostatnie podlanie')}</label>
         <input type="date" id="f-last" name="last_watered" value="${esc(v.last_watered ?? todayStr())}" max="${todayStr()}">
       </div>
       <div class="field">
-        <label for="f-note">Notatka</label>
+        <label for="f-note">${t('Notatka')}</label>
         <textarea id="f-note" name="note" maxlength="500">${esc(v.note ?? '')}</textarea>
       </div>
       <div class="form-actions">
-        ${isEdit ? '<button type="button" class="btn btn-danger" id="f-delete">Usuń</button>' : ''}
-        <button type="submit" class="btn btn-primary">${isEdit ? 'Zapisz zmiany' : 'Dodaj roślinę'}</button>
+        ${isEdit ? `<button type="button" class="btn btn-danger" id="f-delete">${t('Usuń')}</button>` : ''}
+        <button type="submit" class="btn btn-primary">${t(isEdit ? 'Zapisz zmiany' : 'Dodaj roślinę')}</button>
       </div>
     </form>`;
 
@@ -851,7 +868,7 @@ function openForm(ctx) {
     t.classList.toggle('has-photo', !!src);
     t.querySelector('img').src = src || '';
     $('#form-photo-remove').hidden = !src;
-    $('.photo-actions .pick').firstChild.textContent = src ? 'Zmień zdjęcie' : 'Dodaj zdjęcie';
+    $('.photo-actions .pick').firstChild.textContent = t(src ? 'Zmień zdjęcie' : 'Dodaj zdjęcie');
   };
   $('#form-photo').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
@@ -862,12 +879,12 @@ function openForm(ctx) {
       draft.photo = thumb;
       draft.full = full;
       setThumb(thumb);
-    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+    } catch { toast(t('Nie udało się przetworzyć zdjęcia.'), 'error'); }
   });
   $('#form-photo-remove').addEventListener('click', () => { draft.photo = null; setThumb(null); });
 
   const update = () => {
-    const days = estimate({
+    const d = estimate({
       base_summer: ctx.profile.summer,
       base_winter: ctx.profile.winter,
       pot_cm: form.pot_cm.value,
@@ -876,7 +893,7 @@ function openForm(ctx) {
       dry_air: form.dry_air.checked,
       interval_adjust: v.interval_adjust,
     });
-    $('#preview-days').textContent = `co ${days} ${dni(days)}`;
+    $('#preview-days').textContent = t('co {n}', { n: days(d) });
     $('#pot-value').textContent = form.pot_cm.value;
   };
   form.addEventListener('input', update);
@@ -904,7 +921,7 @@ function openForm(ctx) {
       if (draft.photo !== undefined) { payload.photo = draft.photo; payload.photo_full = draft.full; }
       else if (ctx.thumb) { payload.photo = ctx.thumb; payload.photo_full = ctx.full ?? null; }
       const { plant } = await api('save', { json: payload });
-      toast(isEdit ? 'Zapisano.' : 'Dodano roślinę.');
+      toast(t(isEdit ? 'Zapisano.' : 'Dodano roślinę.'));
       closeSheet();
       await refresh();
       if (!isEdit) location.hash = `plant/${plant.id}`;
@@ -916,11 +933,11 @@ function openForm(ctx) {
   });
 
   $('#f-delete')?.addEventListener('click', async () => {
-    if (!confirm(`Usunąć „${form.name.value}”?`)) return;
+    if (!confirm(t('Usunąć „{name}”?', { name: form.name.value }))) return;
     try {
       await api('delete', { json: { id: ctx.id } });
       localStorage.removeItem(`${CACHE_PREFIX}plant.${ctx.id}`);
-      toast('Usunięto.');
+      toast(t('Usunięto.'));
       closeSheet();
       state.plantView = null;
       location.hash = '';
@@ -945,7 +962,7 @@ function urlBase64ToUint8Array(b64) {
 /** navigator.serviceWorker.ready never settles if the worker failed to install — so give it a deadline. */
 async function swReady(ms = 6000) {
   const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error(
-    'Service worker nie jest aktywny. Zamknij aplikację całkowicie, otwórz ponownie i spróbuj jeszcze raz.')), ms));
+    t('Service worker nie jest aktywny. Zamknij aplikację całkowicie, otwórz ponownie i spróbuj jeszcze raz.'))), ms));
   const reg = await Promise.race([navigator.serviceWorker.ready, timeout]);
   return reg;
 }
@@ -953,7 +970,7 @@ async function swReady(ms = 6000) {
 async function refreshPushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     el.btnPush.setAttribute('aria-pressed', 'false');
-    el.pushState.textContent = isIOS && !isStandalone ? 'po instalacji' : 'brak';
+    el.pushState.textContent = t(isIOS && !isStandalone ? 'po instalacji' : 'brak');
     return;
   }
   try {
@@ -961,15 +978,15 @@ async function refreshPushState() {
     state.pushSub = await reg.pushManager.getSubscription();
   } catch { state.pushSub = null; }
   el.btnPush.setAttribute('aria-pressed', state.pushSub ? 'true' : 'false');
-  el.pushState.textContent = state.pushSub ? 'wł.' : 'wył.';
+  el.pushState.textContent = t(state.pushSub ? 'wł.' : 'wył.');
 }
 
 el.btnPush.addEventListener('click', async () => {
   closeMenu();
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     toast(isIOS && !isStandalone
-      ? 'Na iPhonie dodaj greenLy do ekranu początkowego i włącz powiadomienia z ikony.'
-      : 'Ta przeglądarka nie obsługuje powiadomień push.', 'error', 5000);
+      ? t('Na iPhonie dodaj greenLy do ekranu początkowego i włącz powiadomienia z ikony.')
+      : t('Ta przeglądarka nie obsługuje powiadomień push.'), 'error', 5000);
     return;
   }
   el.btnPush.disabled = true;
@@ -979,16 +996,16 @@ el.btnPush.addEventListener('click', async () => {
       await api('unsubscribe', { json: { endpoint: state.pushSub.endpoint } });
       await state.pushSub.unsubscribe();
       state.pushSub = null;
-      toast('Powiadomienia wyłączone.');
+      toast(t('Powiadomienia wyłączone.'));
     } else {
       const { publicKey } = await api('vapid');
-      if (!publicKey) throw new Error('Serwer nie ma skonfigurowanych kluczy VAPID.');
+      if (!publicKey) throw new Error(t('Serwer nie ma skonfigurowanych kluczy VAPID.'));
       const permission = await Notification.requestPermission();
-      if (permission !== 'granted') throw new Error('Brak zgody na powiadomienia.');
+      if (permission !== 'granted') throw new Error(t('Brak zgody na powiadomienia.'));
       const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
       await api('subscribe', { json: sub.toJSON() });
       state.pushSub = sub;
-      toast('Powiadomienia włączone.');
+      toast(t('Powiadomienia włączone.'));
     }
   } catch (err) {
     toast(err.message, 'error', 5000);
@@ -1001,15 +1018,15 @@ el.btnPush.addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // plant profile view  (#plant/<id>)
 // ---------------------------------------------------------------------------
-const STATUS_LABEL = { healthy: 'W porządku', watch: 'Obserwuj', sick: 'Wymaga działania' };
-const CONF_LABEL = { low: 'niska pewność', medium: 'średnia pewność', high: 'wysoka pewność' };
-const MODE_LABEL = { checkup: 'Kontrola', doctor: 'Doktor' };
+const STATUS_LABEL = { healthy: t('W porządku'), watch: t('Obserwuj'), sick: t('Wymaga działania') };
+const CONF_LABEL = { low: t('niska pewność'), medium: t('średnia pewność'), high: t('wysoka pewność') };
+const MODE_LABEL = { checkup: t('Kontrola'), doctor: t('Doktor') };
 // USD per 1M tokens (input, output) — only for the approximate cost shown under each analysis.
 const PRICES = { 'claude-opus-5': [5, 25], 'claude-sonnet-5': [2, 10], 'claude-haiku-4-5': [1, 5] };
 
 const label = (list, key) => list.find(([k]) => k === key)?.[1] ?? key;
-const fmtDate = (iso) => new Date(iso).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
-const fmtDateTime = (iso) => new Date(iso).toLocaleString('pl-PL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fmtDate = (iso) => new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDateTime = (iso) => new Date(iso).toLocaleString(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 function route() {
   if (!state.token) return;
@@ -1057,7 +1074,7 @@ function renderPlantSkeleton(p) {
   const photo = p ? photoUrl(p) : null;
   const pct = p ? fillPercent(p) : 0;
   el.plantView.innerHTML = `
-    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Rośliny</a>
+    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>${t('Rośliny')}</a>
     <div class="pv-head">
       <span class="thumb ${photo ? 'has-photo' : ''}"><img alt="" ${photo ? `src="${esc(photo)}"` : ''}></span>
       <div>
@@ -1069,13 +1086,13 @@ function renderPlantSkeleton(p) {
     ${p ? `<div class="pv-status ${p.days_left !== null && p.days_left < 0 ? 'is-overdue' : ''} ${p.days_left === 0 ? 'is-today' : ''}">
       <span class="bar ${p.days_left === null ? 'unknown' : ''}"><span class="bar-fill ${pct < 20 ? 'low' : ''}" style="width:${pct}%"></span></span>
       <span class="plant-meta">${esc(metaText(p))}</span>
-      <button type="button" class="btn btn-water" disabled>Podlej</button>
+      <button type="button" class="btn btn-water" disabled>${t('Podlej')}</button>
     </div>` : '<div class="skel" style="min-height:58px;margin-bottom:12px"></div>'}
-    <div class="pv-actions"><button class="btn btn-soft" disabled>Kontrola</button><button class="btn btn-soft" disabled>Doktor</button><button class="btn" disabled>Edytuj</button></div>
-    <div class="pv-actions two"><button class="btn" disabled>+ Zdarzenie</button><button class="btn" disabled>Rozsadź</button></div>
-    <section class="section"><h2>Warunki</h2><div class="skel" style="min-height:120px"></div></section>
-    <section class="section"><h2>Jak dbać</h2><div class="skel" style="min-height:140px"></div></section>
-    <section class="section"><h2>Historia</h2><div class="skel"></div></section>`;
+    <div class="pv-actions"><button class="btn btn-soft" disabled>${t('Kontrola')}</button><button class="btn btn-soft" disabled>${t('Doktor')}</button><button class="btn" disabled>${t('Edytuj')}</button></div>
+    <div class="pv-actions two"><button class="btn" disabled>${t('+ Zdarzenie')}</button><button class="btn" disabled>${t('Rozsadź')}</button></div>
+    <section class="section"><h2>${t('Warunki')}</h2><div class="skel" style="min-height:120px"></div></section>
+    <section class="section"><h2>${t('Jak dbać')}</h2><div class="skel" style="min-height:140px"></div></section>
+    <section class="section"><h2>${t('Historia')}</h2><div class="skel"></div></section>`;
 }
 
 function approxCost(check) {
@@ -1096,9 +1113,9 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
   const answered = new Set(checks.map((c) => c.parent_id).filter(Boolean));
 
   el.plantView.innerHTML = `
-    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Rośliny</a>
+    <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>${t('Rośliny')}</a>
     <div class="pv-head">
-      ${photo ? `<button type="button" class="thumb has-photo thumb-btn" id="pv-photo" aria-label="Powiększ zdjęcie"><img alt="" src="${esc(photo)}"></button>` : '<span class="thumb"><img alt=""></span>'}
+      ${photo ? `<button type="button" class="thumb has-photo thumb-btn" id="pv-photo" aria-label="${t('Powiększ zdjęcie')}"><img alt="" src="${esc(photo)}"></button>` : '<span class="thumb"><img alt=""></span>'}
       <div>
         <h1>${esc(p.name)}</h1>
         <div class="sci">${esc(p.species) || '—'}${p.common ? ` · ${esc(p.common)}` : ''}</div>
@@ -1108,70 +1125,70 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
     <div class="pv-status ${p.days_left !== null && p.days_left < 0 ? 'is-overdue' : ''} ${p.days_left === 0 ? 'is-today' : ''}">
       <span class="bar ${p.days_left === null ? 'unknown' : ''}"><span class="bar-fill ${pct < 20 ? 'low' : ''}" style="width:${pct}%"></span></span>
       <span class="plant-meta">${esc(metaText(p))}</span>
-      <button type="button" class="btn btn-water" id="pv-water">Podlej</button>
+      <button type="button" class="btn btn-water" id="pv-water">${t('Podlej')}</button>
     </div>
     <p class="pv-ml">
       <span>${p.water_mode === 'soak'
-        ? 'Zamiast porcji: <b>zanurz doniczkę</b> w letniej wodzie na 10–15 min, potem odsącz.'
-        : `Na raz ok. <b>${p.water_ml} ml</b> — aż woda pokaże się w podstawce, nadmiar wylej.`}${p.ml_adjust < 1 || p.interval_adjust > 1
-        ? ` <span class="learned" title="Nauczone z „Nadal mokro”: porcja ×${p.ml_adjust}, interwał ×${p.interval_adjust}">↓ dopasowane</span>` : ''}</span>
-      <button type="button" class="btn btn-wet" id="pv-wet" ${isDue(p) ? '' : 'hidden'}>Nadal mokro</button>
+        ? t('Zamiast porcji: <b>zanurz doniczkę</b> w letniej wodzie na 10–15 min, potem odsącz.')
+        : t('Na raz ok. <b>{ml} ml</b> — aż woda pokaże się w podstawce, nadmiar wylej.', { ml: p.water_ml })}${p.ml_adjust < 1 || p.interval_adjust > 1
+        ? ` <span class="learned" title="${t('Nauczone z „Nadal mokro”: porcja ×{ml}, interwał ×{iv}', { ml: p.ml_adjust, iv: p.interval_adjust })}">${t('↓ dopasowane')}</span>` : ''}</span>
+      <button type="button" class="btn btn-wet" id="pv-wet" ${isDue(p) ? '' : 'hidden'}>${t('Nadal mokro')}</button>
     </p>
     <div class="pv-actions">
-      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-checkup">Kontrola</button>
-      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-doctor">Doktor</button>
-      <button type="button" class="btn" id="pv-edit">Edytuj</button>
+      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-checkup">${t('Kontrola')}</button>
+      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-doctor">${t('Doktor')}</button>
+      <button type="button" class="btn" id="pv-edit">${t('Edytuj')}</button>
     </div>
     <div class="pv-actions two">
-      <button type="button" class="btn" id="pv-event">+ Zdarzenie</button>
-      <button type="button" class="btn" id="pv-split">Rozsadź</button>
+      <button type="button" class="btn" id="pv-event">${t('+ Zdarzenie')}</button>
+      <button type="button" class="btn" id="pv-split">${t('Rozsadź')}</button>
     </div>
 
     <section class="section">
-      <h2>Warunki</h2>
+      <h2>${t('Warunki')}</h2>
       <div class="card"><dl class="kv">
-        <dt>Doniczka</dt><dd>${p.pot_cm} cm · ${esc(label(MATERIALS, p.pot_material))}</dd>
-        <dt>Światło</dt><dd>${esc(label(LIGHTS, p.light))}</dd>
-        <dt>Powietrze</dt><dd>${p.dry_air ? 'suche / grzejnik w pobliżu' : 'normalne'}</dd>
-        <dt>Podlewanie</dt><dd>co ${p.interval} ${dni(p.interval)} o tej porze roku${avg ? ` · faktycznie średnio co ${avg} ${dni(avg)}` : ''}</dd>
-        ${p.note ? `<dt>Notatka</dt><dd>${esc(p.note)}</dd>` : ''}
+        <dt>${t('Doniczka')}</dt><dd>${p.pot_cm} cm · ${esc(label(MATERIALS, p.pot_material))}</dd>
+        <dt>${t('Światło')}</dt><dd>${esc(label(LIGHTS, p.light))}</dd>
+        <dt>${t('Powietrze')}</dt><dd>${t(p.dry_air ? 'suche / grzejnik w pobliżu' : 'normalne')}</dd>
+        <dt>${t('Podlewanie')}</dt><dd>${t('co {n}', { n: days(p.interval) })} ${t('o tej porze roku')}${avg ? ` · ${t('faktycznie średnio co {n}', { n: days(avg) })}` : ''}</dd>
+        ${p.note ? `<dt>${t('Notatka')}</dt><dd>${esc(p.note)}</dd>` : ''}
       </dl></div>
     </section>
 
     <section class="section">
-      <h2>Jak dbać — ${esc(care.label)}</h2>
+      <h2>${t('Jak dbać — {label}', { label: esc(care.label) })}</h2>
       <div class="card care">
-        <p><b>Światło:</b> ${esc(care.light)}</p>
-        <p><b>Wilgotność:</b> ${esc(care.humidity)}</p>
-        <p><b>Temperatura:</b> ${esc(care.temp)}</p>
-        <p><b>Gdzie postawić:</b> ${esc(care.placement)}</p>
-        <p><b>Podlewanie:</b> ${esc(care.note)}</p>
+        <p><b>${t('Światło')}:</b> ${esc(care.light)}</p>
+        <p><b>${t('Wilgotność')}:</b> ${esc(care.humidity)}</p>
+        <p><b>${t('Temperatura')}:</b> ${esc(care.temp)}</p>
+        <p><b>${t('Gdzie postawić')}:</b> ${esc(care.placement)}</p>
+        <p><b>${t('Podlewanie')}:</b> ${esc(care.note)}</p>
       </div>
     </section>
 
     <section class="section" id="pv-profile">
-      <h2>Profil gatunku</h2>
-      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.</p>
-        <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-gen-profile">Opisz gatunek</button></div>`}
+      <h2>${t('Profil gatunku')}</h2>
+      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">${t('Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.')}</p>
+        <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-gen-profile">${t('Opisz gatunek')}</button></div>`}
     </section>
 
     <section class="section">
-      <h2>Analizy</h2>
+      <h2>${t('Analizy')}</h2>
       ${checks.length ? `<ul class="check-list">${checks.map((c) => renderCheck(c)).join('')}</ul>`
-        : '<p class="muted">Jeszcze żadnej. „Kontrola” ocenia ogólny stan i warunki, „Doktor” szuka przyczyny konkretnego problemu.</p>'}
+        : `<p class="muted">${t('Jeszcze żadnej. „Kontrola” ocenia ogólny stan i warunki, „Doktor” szuka przyczyny konkretnego problemu.')}</p>`}
     </section>
 
     <section class="section" id="pv-history">
-      <h2>Historia</h2>
+      <h2>${t('Historia')}</h2>
       <div class="filters" role="tablist">
-        ${[['all', 'Wszystko'], ['care', 'Zabiegi'], ['water', 'Podlewania'], ['ai', 'Analizy']].map(([k, l]) => `<button type="button" class="chip ${histFilter === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}
+        ${[['all', t('Wszystko')], ['care', t('Zabiegi')], ['water', t('Podlewania')], ['ai', t('Analizy')]].map(([k, l]) => `<button type="button" class="chip ${histFilter === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}
       </div>
       <ul class="timeline" id="timeline"></ul>
     </section>`;
 
   const put = (plant) => { const i = state.plants.findIndex((x) => x.id === p.id); if (i >= 0) state.plants[i] = plant; };
   $('#pv-water').addEventListener('click', (e) => waterWithUndo(p.id, e.currentTarget, {
-    onWatered(plant) { put(plant); renderStatusInPlace(plant); toast(`Podlano: ${plant.name}`); },
+    onWatered(plant) { put(plant); renderStatusInPlace(plant); toast(t('Podlano: {name}', { name: plant.name })); },
     onSettled(plant) { if (plant) put(plant); showPlant(p.id); },
   }));
   $('#pv-event').addEventListener('click', () => openEventPicker(p));
@@ -1183,17 +1200,17 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
   const drawTimeline = () => {
     const list = histFilter === 'all' ? items : items.filter((it) => it.cat === histFilter);
     $('#timeline').innerHTML = list.length ? list.map(renderTimelineItem).join('')
-      : '<li class="tl-empty">Nic tu jeszcze nie ma.</li>';
+      : `<li class="tl-empty">${t('Nic tu jeszcze nie ma.')}</li>`;
     for (const li of $('#timeline').querySelectorAll('.tl-item')) {
       const it = items.find((x) => x.key === li.dataset.key);
       if (!it) continue;
       if (it.check) li.addEventListener('click', (e) => { if (!e.target.closest('.btn-x')) openCheckSheet(it.check, p.id, answered.has(it.check.id)); });
       li.querySelector('.btn-x')?.addEventListener('click', async () => {
-        if (!confirm(`Usunąć: ${it.title} (${fmtDateTime(it.ts)})?`)) return;
+        if (!confirm(t('Usunąć: {title} ({when})?', { title: it.title, when: fmtDateTime(it.ts) }))) return;
         try {
           const { plant } = await api(it.kind === 'water' ? 'unwater' : 'unevent', { json: it.kind === 'water' ? { watering_id: it.id } : { event_id: it.id } });
           put(plant);
-          toast('Usunięto.');
+          toast(t('Usunięto.'));
           showPlant(p.id);
         } catch (err) { toast(err.message, 'error'); }
       });
@@ -1240,30 +1257,30 @@ function renderStatusInPlace(p) {
 // "still wet": push the reminder instead of watering into soggy soil
 // ---------------------------------------------------------------------------
 function openSnooze(p) {
-  openSheet(`Nadal mokro: ${p.name}`);
+  openSheet(t('Nadal mokro: {name}', { name: p.name }));
   el.sheetBody.innerHTML = `
     <div class="preview" style="margin-bottom:14px">
-      <strong>Nie podlewaj</strong>
-      dopóki 2–3 cm podłoża pod powierzchnią nie przeschną. Sprawdź palcem albo patyczkiem.
-      <div class="note">${p.water_mode === 'soak' ? 'Storczyk: moczysz doniczkę zamiast lać porcję, więc' : `Plan zakłada ok. <b>${p.water_ml} ml</b> na raz przy tej doniczce. Jeśli ziemia jest mokra po tylu dniach,`} przy następnym podlaniu ${p.water_mode === 'soak' ? 'skróć moczenie' : 'wlej mniej'} albo sprawdź, czy w osłonce nie stoi woda.</div>
+      <strong>${t('Nie podlewaj')}</strong>
+      ${t('dopóki 2–3 cm podłoża pod powierzchnią nie przeschną. Sprawdź palcem albo patyczkiem.')}
+      <div class="note">${p.water_mode === 'soak' ? t('Storczyk: moczysz doniczkę zamiast lać porcję, więc') : t('Plan zakłada ok. <b>{ml} ml</b> na raz przy tej doniczce. Jeśli ziemia jest mokra po tylu dniach,', { ml: p.water_ml })} ${t('przy następnym podlaniu')} ${t(p.water_mode === 'soak' ? 'skróć moczenie' : 'wlej mniej')} ${t('albo sprawdź, czy w osłonce nie stoi woda.')}</div>
     </div>
-    <p class="muted" style="margin:0 0 8px">Przypomnę ponownie za:</p>
+    <p class="muted" style="margin:0 0 8px">${t('Przypomnę ponownie za:')}</p>
     <div class="snooze-grid">
-      ${[1, 2, 3, 5].map((d) => `<button type="button" class="btn ${d === 2 ? 'btn-soft' : ''}" data-days="${d}">${d} ${dni(d)}</button>`).join('')}
+      ${[1, 2, 3, 5].map((d) => `<button type="button" class="btn ${d === 2 ? 'btn-soft' : ''}" data-days="${d}">${days(d)}</button>`).join('')}
     </div>
-    <div class="field" style="margin-top:14px"><label for="snooze-note">Notatka (opcjonalnie)</label><input type="text" id="snooze-note" maxlength="200" placeholder="np. osłonka była pełna wody"></div>
-    <p class="hint">Odłożenie trafia do historii. Gdy powtórzy się w tym samym cyklu albo dwa cykle z rzędu, greenLy sam zmniejszy porcję o 15 % i wydłuży interwał o 10 % dla tej rośliny; trzy spokojne cykle przywracają normę.${p.ml_adjust < 1 || p.interval_adjust > 1 ? ` Teraz: porcja ×${p.ml_adjust}, interwał ×${p.interval_adjust}.` : ''}</p>`;
+    <div class="field" style="margin-top:14px"><label for="snooze-note">${t('Notatka (opcjonalnie)')}</label><input type="text" id="snooze-note" maxlength="200" placeholder="${t('np. osłonka była pełna wody')}"></div>
+    <p class="hint">${t('Odłożenie trafia do historii. Gdy powtórzy się w tym samym cyklu albo dwa cykle z rzędu, greenLy sam zmniejszy porcję o 15 % i wydłuży interwał o 10 % dla tej rośliny; trzy spokojne cykle przywracają normę.')}${p.ml_adjust < 1 || p.interval_adjust > 1 ? ' ' + t('Teraz: porcja ×{ml}, interwał ×{iv}.', { ml: p.ml_adjust, iv: p.interval_adjust }) : ''}</p>`;
   for (const b of el.sheetBody.querySelectorAll('.snooze-grid .btn')) {
     b.addEventListener('click', async () => {
-      const days = Number(b.dataset.days);
+      const d = Number(b.dataset.days);
       for (const x of el.sheetBody.querySelectorAll('.snooze-grid .btn')) x.disabled = true;
       try {
-        const { plant, learned } = await api('postpone', { json: { id: p.id, days, note: $('#snooze-note').value.trim() } });
+        const { plant, learned } = await api('postpone', { json: { id: p.id, days: d, note: $('#snooze-note').value.trim() } });
         const i = state.plants.findIndex((x) => x.id === p.id);
         if (i >= 0) state.plants[i] = plant;
         toast(learned
-          ? `Przypomnę za ${days} ${dni(days)}. Ta roślina dostaje mniej: ${plant.water_mode === 'soak' ? 'krótsze moczenie' : `ok. ${plant.water_ml} ml`}, co ${plant.interval} ${dni(plant.interval)}.`
-          : `Przypomnę za ${days} ${dni(days)}.`, 'info', learned ? 6000 : 3200);
+          ? t('Przypomnę za {n}. Ta roślina dostaje mniej: {portion}, co {every}.', { n: days(d), portion: plant.water_mode === 'soak' ? t('krótsze moczenie') : t('ok. {ml} ml', { ml: plant.water_ml }), every: days(plant.interval) })
+          : t('Przypomnę za {n}.', { n: days(d) }), 'info', learned ? 6000 : 3200);
         closeSheet();
         state.plants.sort(sortPlants);
         renderList();
@@ -1314,11 +1331,11 @@ el.sheetBody.addEventListener('click', (e) => {
 function renderProfile(pr) {
   const row = (k, v) => (v ? `<p><b>${k}:</b> ${esc(v)}</p>` : '');
   return `<div class="card care">
-    ${row('Pochodzenie', pr.origin)}${row('Światło', pr.light)}${row('Podlewanie', pr.watering)}${row('Wilgotność', pr.humidity)}
-    ${row('Temperatura', pr.temperature)}${row('Podłoże i doniczka', pr.soil_and_pot)}${row('Nawożenie', pr.fertilizing)}
-    ${row('Przesadzanie', pr.repotting)}${row('Zwierzęta', pr.pets)}${row('Gdzie postawić', pr.placement)}
-    ${pr.common_problems?.length ? `<p><b>Typowe problemy:</b></p><ul>${pr.common_problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    <div class="inline-actions"><button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-refresh-profile">Napisz od nowa</button></div>
+    ${row(t('Pochodzenie'), pr.origin)}${row(t('Światło'), pr.light)}${row(t('Podlewanie'), pr.watering)}${row(t('Wilgotność'), pr.humidity)}
+    ${row(t('Temperatura'), pr.temperature)}${row(t('Podłoże i doniczka'), pr.soil_and_pot)}${row(t('Nawożenie'), pr.fertilizing)}
+    ${row(t('Przesadzanie'), pr.repotting)}${row(t('Zwierzęta'), pr.pets)}${row(t('Gdzie postawić'), pr.placement)}
+    ${pr.common_problems?.length ? `<p><b>${t('Typowe problemy:')}</b></p><ul>${pr.common_problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <div class="inline-actions"><button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-refresh-profile">${t('Napisz od nowa')}</button></div>
   </div>`;
 }
 
@@ -1329,7 +1346,7 @@ async function generateProfile(id, btn, refresh = false) {
   try {
     await api('profile', { json: { id, refresh } });
     think.finish();
-    toast('Opis gotowy.');
+    toast(t('Opis gotowy.'));
     setTimeout(() => showPlant(id), reduceMotion.matches ? 0 : 400);
   } catch (err) {
     think.fail();
@@ -1345,8 +1362,8 @@ function renderResult(r) {
     <span class="verdict ${esc(r.status)}">${STATUS_LABEL[r.status] ?? esc(r.status)}</span>
     <p style="margin:4px 0 8px">${esc(r.summary)}</p>
     ${r.findings?.length ? `<ul class="findings">${r.findings.map((f) => `<li><b>${esc(f.observation)}</b> → ${esc(f.likely_cause)} <span class="conf">(${CONF_LABEL[f.confidence] ?? esc(f.confidence)})</span></li>`).join('')}</ul>` : ''}
-    ${r.actions?.length ? `<p style="margin:8px 0 0"><b>Co zrobić:</b></p><ol class="actions-list">${r.actions.map((a) => `<li>${esc(a)}</li>`).join('')}</ol>` : ''}
-    ${r.watering ? `<p style="margin:8px 0 0"><b>Podlewanie:</b> ${esc(r.watering)}</p>` : ''}`;
+    ${r.actions?.length ? `<p style="margin:8px 0 0"><b>${t('Co zrobić:')}</b></p><ol class="actions-list">${r.actions.map((a) => `<li>${esc(a)}</li>`).join('')}</ol>` : ''}
+    ${r.watering ? `<p style="margin:8px 0 0"><b>${t('Podlewanie:')}</b> ${esc(r.watering)}</p>` : ''}`;
 }
 
 const photoSrc = (url) => `${url}?t=${encodeURIComponent(state.token)}`;
@@ -1359,8 +1376,8 @@ function renderCheck(c) {
     <button type="button" class="check-head" data-id="${c.id}">
       <span class="thumb ${thumb ? 'has-photo' : ''}"><img alt="" loading="lazy" ${thumb ? `src="${esc(photoSrc(thumb))}"` : ''}></span>
       <span class="title">
-        <span class="row"><span class="dot ${esc(r.status)}"></span>${esc(r.title || STATUS_LABEL[r.status] || 'Analiza')}</span>
-        <span class="mode">${MODE_LABEL[c.mode] ?? esc(c.mode)}${c.parent_id ? ' · dopytanie' : ''}${r.questions?.length ? ' · pyta' : ''}</span>
+        <span class="row"><span class="dot ${esc(r.status)}"></span>${esc(r.title || STATUS_LABEL[r.status] || t('Analiza'))}</span>
+        <span class="mode">${MODE_LABEL[c.mode] ?? esc(c.mode)}${c.parent_id ? ` · ${t('dopytanie')}` : ''}${r.questions?.length ? ` · ${t('pyta')}` : ''}</span>
       </span>
       <span class="when">${fmtDateTime(c.ts)}</span>
     </button>
@@ -1376,25 +1393,25 @@ function renderCheckDetails(c, answered) {
     ${c.user_text ? `<p class="user-text">„${esc(c.user_text)}”</p>` : ''}
     ${renderResult(r)}
     ${r.questions?.length ? `<div class="questions">
-      <b>${answered ? 'Pytania (odpowiedziano)' : 'Doktor pyta:'}</b>
+      <b>${t(answered ? 'Pytania (odpowiedziano)' : 'Doktor pyta:')}</b>
       <ol>${r.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>
       ${answered ? '' : `<form class="answer-form" data-parent="${c.id}">
-        <textarea name="text" placeholder="Odpowiedz po kolei…" required></textarea>
-        <button type="submit" class="btn btn-primary btn-block">Odpowiedz i zaktualizuj diagnozę</button>
+        <textarea name="text" placeholder="${t('Odpowiedz po kolei…')}" required></textarea>
+        <button type="submit" class="btn btn-primary btn-block">${t('Odpowiedz i zaktualizuj diagnozę')}</button>
       </form>`}
     </div>` : ''}
-    <p class="usage">${fmtDateTime(c.ts)} · ${esc(c.model || '')}${c.input_tokens != null ? ` · ${c.input_tokens}+${c.output_tokens ?? 0} tokenów` : ''}${approxCost(c)}</p>`;
+    <p class="usage">${fmtDateTime(c.ts)} · ${esc(c.model || '')}${c.input_tokens != null ? ` · ${c.input_tokens}+${c.output_tokens ?? 0} ${t('tokenów')}` : ''}${approxCost(c)}</p>`;
 }
 
 function openCheckSheet(c, plantId, answered) {
-  openSheet(c.result?.title || MODE_LABEL[c.mode] || 'Analiza');
+  openSheet(c.result?.title || MODE_LABEL[c.mode] || t('Analiza'));
   fillCheckSheet(c, plantId, answered);
 }
 
 function fillCheckSheet(c, plantId, answered) {
-  el.sheetTitle.textContent = c.result?.title || MODE_LABEL[c.mode] || 'Analiza';
+  el.sheetTitle.textContent = c.result?.title || MODE_LABEL[c.mode] || t('Analiza');
   el.sheetBody.innerHTML = `${renderCheckDetails(c, answered)}
-    <button type="button" class="btn btn-block" id="check-close" style="margin-top:12px">Zamknij</button>`;
+    <button type="button" class="btn btn-block" id="check-close" style="margin-top:12px">${t('Zamknij')}</button>`;
   el.sheetBody.scrollTop = 0;
   $('#check-close').addEventListener('click', closeSheet);
   $('.answer-form', el.sheetBody)?.addEventListener('submit', (e) => submitFollowUp(e, plantId));
@@ -1415,7 +1432,7 @@ async function submitFollowUp(e, plantId) {
     fd.append('text', answer);
     const { check } = await api('health', { form: fd });
     think.finish();
-    toast('Diagnoza zaktualizowana.');
+    toast(t('Diagnoza zaktualizowana.'));
     setTimeout(() => fillCheckSheet(check, plantId, false), reduceMotion.matches ? 0 : 500);
     showPlant(plantId); // refresh the list behind the sheet
   } catch (err) {
@@ -1486,9 +1503,9 @@ function startThinking(host, kind) {
   const texts = [...pool.slice(0, 3), ...tail];
   host.innerHTML = `<div class="thinking" role="status" aria-live="polite">
     <span class="think-leaf" aria-hidden="true">🌿</span>
-    <p class="think-text"><span class="t">${esc(texts[0])}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
+    <p class="think-text"><span class="t">${esc(t(texts[0]))}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
     <div class="think-bar"><span></span></div>
-    <p class="think-time">zwykle ok. ${est} s</p>
+    <p class="think-time">${t('zwykle ok. {est} s', { est })}</p>
   </div>`;
   const textEl = host.querySelector('.think-text');
   const tEl = textEl.querySelector('.t');
@@ -1504,16 +1521,16 @@ function startThinking(host, kind) {
     const pct = sec <= est ? 92 * (1 - Math.pow(1 - x, 2)) : 92 + 6 * (1 - Math.exp(-(sec - est) / est));
     bar.style.width = `${pct.toFixed(1)}%`;
     if (sec <= est) {
-      timeEl.textContent = `minęło ${Math.floor(sec)} s · zwykle ok. ${est} s`;
+      timeEl.textContent = t('minęło {s} s · zwykle ok. {est} s', { s: Math.floor(sec), est });
     } else {
-      timeEl.textContent = `minęło ${Math.floor(sec)} s · trwa dłużej niż zwykle, model dokładnie ogląda zdjęcia`;
+      timeEl.textContent = t('minęło {s} s · trwa dłużej niż zwykle, model dokładnie ogląda zdjęcia', { s: Math.floor(sec) });
       timeEl.classList.add('over');
     }
   };
   const swap = () => {
     i = (i + 1) % texts.length;
     textEl.classList.add('swap');
-    setTimeout(() => { tEl.textContent = texts[i]; textEl.classList.remove('swap'); }, reduceMotion.matches ? 0 : 300);
+    setTimeout(() => { tEl.textContent = t(texts[i]); textEl.classList.remove('swap'); }, reduceMotion.matches ? 0 : 300);
   };
   tick();
   const t1 = setInterval(tick, 1000);
@@ -1529,34 +1546,32 @@ function startThinking(host, kind) {
 // care events, division, timeline
 // ---------------------------------------------------------------------------
 const EVENT_DEFS = {
-  repot: { icon: '🪴', label: 'Przesadzenie', hint: 'nowa doniczka lub podłoże' },
-  split: { icon: '✂️', label: 'Rozsadzenie', hint: 'podział na dwie rośliny' },
-  move: { icon: '🪟', label: 'Przestawienie', hint: 'nowe miejsce, inne światło' },
-  fertilize: { icon: '🧪', label: 'Nawożenie', hint: 'czym i ile' },
-  prune: { icon: '🌿', label: 'Przycięcie', hint: 'formowanie, usunięte liście' },
-  treat: { icon: '🐛', label: 'Zabieg / oprysk', hint: 'szkodniki, grzyb' },
-  shower: { icon: '🚿', label: 'Prysznic / zraszanie', hint: 'mycie liści' },
-  bloom: { icon: '🌸', label: 'Kwitnienie', hint: 'obserwacja' },
-  growth: { icon: '🌱', label: 'Nowy przyrost', hint: 'liść, pęd, korzeń' },
-  note: { icon: '📝', label: 'Notatka', hint: 'cokolwiek innego' },
+  repot: { icon: '🪴', label: t('Przesadzenie'), hint: t('nowa doniczka lub podłoże') },
+  split: { icon: '✂️', label: t('Rozsadzenie'), hint: t('podział na dwie rośliny') },
+  move: { icon: '🪟', label: t('Przestawienie'), hint: t('nowe miejsce, inne światło') },
+  fertilize: { icon: '🧪', label: t('Nawożenie'), hint: t('czym i ile') },
+  prune: { icon: '🌿', label: t('Przycięcie'), hint: t('formowanie, usunięte liście') },
+  treat: { icon: '🐛', label: t('Zabieg / oprysk'), hint: t('szkodniki, grzyb') },
+  shower: { icon: '🚿', label: t('Prysznic / zraszanie'), hint: t('mycie liści') },
+  bloom: { icon: '🌸', label: t('Kwitnienie'), hint: t('obserwacja') },
+  growth: { icon: '🌱', label: t('Nowy przyrost'), hint: t('liść, pęd, korzeń') },
+  note: { icon: '📝', label: t('Notatka'), hint: t('cokolwiek innego') },
 };
-const HIDDEN_EVENTS = { snooze: { icon: '⏳', label: 'Odłożone podlanie' } }; // logged by the app, not picked by hand
+const HIDDEN_EVENTS = { snooze: { icon: '⏳', label: t('Odłożone podlanie') } }; // logged by the app, not picked by hand
 let histFilter = 'all';
 
-const SHORT_MATERIAL = { terracotta: 'terakota', ceramic: 'ceramika', plastic: 'plastik', cachepot: 'bez odpływu' };
-const SHORT_LIGHT = { sun: 'pełne słońce', bright: 'jasno', partial: 'półcień', dark: 'ciemny kąt' };
+const SHORT_MATERIAL = { terracotta: t('terakota'), ceramic: t('ceramika'), plastic: t('plastik'), cachepot: t('bez odpływu') };
+const SHORT_LIGHT = { sun: t('pełne słońce'), bright: t('jasno'), partial: t('półcień'), dark: t('ciemny kąt') };
 
 /** Human detail line for an event (Polish). */
 function eventDetail(e) {
   const d = e.data ?? {};
   const bits = [];
   if (e.type === 'repot') bits.push(`${d.pot_cm_from && d.pot_cm_from !== d.pot_cm ? `${d.pot_cm_from} → ` : ''}${d.pot_cm} cm · ${SHORT_MATERIAL[d.pot_material] ?? esc(d.pot_material ?? '')}`);
-  if (e.type === 'move') bits.push(`${SHORT_LIGHT[d.light] ?? esc(d.light ?? '')}${d.dry_air ? ' · suche powietrze' : ''}`);
-  if (e.type === 'split') bits.push(d.role === 'child'
-    ? `odłączona od <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`
-    : `oddzielono <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`);
-  if (e.type === 'snooze') bits.push(`nadal mokro · o ${d.days} ${dni(d.days)}${d.until ? ` (do ${fmtDate(d.until)})` : ''}${d.adjusted ? ' · porcja −15 %, interwał +10 %' : ''}`);
-  if (d.watered) bits.push('podlana przy okazji');
+  if (e.type === 'move') bits.push(`${SHORT_LIGHT[d.light] ?? esc(d.light ?? '')}${d.dry_air ? ` · ${t('suche powietrze')}` : ''}`);
+  if (e.type === 'split') bits.push(`${t(d.role === 'child' ? 'odłączona od' : 'oddzielono')} <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`);
+  if (e.type === 'snooze') bits.push(`${t('nadal mokro · o {n}', { n: days(d.days) })}${d.until ? ` (${t('do {date}', { date: fmtDate(d.until) })})` : ''}${d.adjusted ? ` · ${t('porcja −15 %, interwał +10 %')}` : ''}`);
+  if (d.watered) bits.push(t('podlana przy okazji'));
   if (e.note) bits.push(esc(e.note));
   return bits.join(' · ');
 }
@@ -1567,14 +1582,14 @@ function buildTimeline({ plant, waterings, checks, events, answered }) {
     const def = EVENT_DEFS[e.type] ?? HIDDEN_EVENTS[e.type] ?? { icon: '•', label: e.type };
     items.push({ key: `e${e.id}`, kind: 'event', id: e.id, cat: 'care', ts: e.ts, icon: def.icon, title: def.label, detail: eventDetail(e), removable: true });
   }
-  for (const w of waterings) items.push({ key: `w${w.id}`, kind: 'water', id: w.id, cat: 'water', ts: w.ts, icon: '💧', title: 'Podlanie', detail: '', removable: true });
+  for (const w of waterings) items.push({ key: `w${w.id}`, kind: 'water', id: w.id, cat: 'water', ts: w.ts, icon: '💧', title: t('Podlanie'), detail: '', removable: true });
   for (const c of checks) {
     const r = c.result ?? {};
     items.push({ key: `c${c.id}`, kind: 'check', id: c.id, cat: 'ai', ts: c.ts, icon: c.mode === 'doctor' ? '🩺' : '🔍', check: c,
-      title: r.title || STATUS_LABEL[r.status] || 'Analiza',
-      detail: `${MODE_LABEL[c.mode] ?? c.mode}${c.parent_id ? ' · dopytanie' : ''} · ${STATUS_LABEL[r.status] ?? ''}${r.questions?.length && !answered.has(c.id) ? ' · czeka na odpowiedź' : ''}` });
+      title: r.title || STATUS_LABEL[r.status] || t('Analiza'),
+      detail: `${MODE_LABEL[c.mode] ?? c.mode}${c.parent_id ? ` · ${t('dopytanie')}` : ''} · ${STATUS_LABEL[r.status] ?? ''}${r.questions?.length && !answered.has(c.id) ? ` · ${t('czeka na odpowiedź')}` : ''}` });
   }
-  items.push({ key: 'created', kind: 'created', cat: 'care', ts: plant.created_at, icon: '🌿', title: 'Dodano do greenLy', detail: plant.species ? `<i>${esc(plant.species)}</i>` : '', removable: false });
+  items.push({ key: 'created', kind: 'created', cat: 'care', ts: plant.created_at, icon: '🌿', title: t('Dodano do greenLy'), detail: plant.species ? `<i>${esc(plant.species)}</i>` : '', removable: false });
   items.sort((a, b) => new Date(b.ts) - new Date(a.ts));
   return items;
 }
@@ -1584,12 +1599,12 @@ function renderTimelineItem(it) {
     <span class="tl-ico" aria-hidden="true">${it.icon}</span>
     <div class="tl-main"><div class="tl-title">${esc(it.title)}</div>${it.detail ? `<div class="tl-detail">${it.detail}</div>` : ''}</div>
     <span class="tl-when">${fmtDateTime(it.ts)}</span>
-    ${it.removable ? `<button type="button" class="btn-x" aria-label="Usuń">×</button>` : ''}
+    ${it.removable ? `<button type="button" class="btn-x" aria-label="${t('Usuń')}">×</button>` : ''}
   </li>`;
 }
 
 function openEventPicker(p) {
-  openSheet(`Zdarzenie: ${p.name}`);
+  openSheet(t('Zdarzenie: {name}', { name: p.name }));
   el.sheetBody.innerHTML = `<div class="type-grid">${Object.entries(EVENT_DEFS).map(([k, d]) =>
     `<button type="button" class="type-btn" data-type="${k}"><span class="ico" aria-hidden="true">${d.icon}</span><span><b>${d.label}</b><small>${d.hint}</small></span></button>`).join('')}</div>`;
   for (const b of el.sheetBody.querySelectorAll('.type-btn')) {
@@ -1603,26 +1618,26 @@ function openEventForm(p, type) {
   if (el.sheet.hidden) openSheet(`${def.icon} ${def.label}`); else el.sheetTitle.textContent = `${def.icon} ${def.label}`;
   const extra = type === 'repot' ? `
       <div class="field">
-        <label for="e-pot">Nowa średnica doniczki: <span class="range-value" id="e-pot-value">${p.pot_cm}</span> cm</label>
+        <label for="e-pot">${t('Nowa średnica doniczki')}: <span class="range-value" id="e-pot-value">${p.pot_cm}</span> cm</label>
         <input type="range" id="e-pot" name="pot_cm" min="6" max="40" step="1" value="${p.pot_cm}">
       </div>
-      <div class="field"><label for="e-material">Doniczka</label><select id="e-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
-      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> Podlana przy tej okazji</label></div>
+      <div class="field"><label for="e-material">${t('Doniczka')}</label><select id="e-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> ${t('Przy okazji podlana')}</label></div>
       <div class="preview" id="e-preview"><strong id="e-days"></strong> po tej zmianie</div>`
     : type === 'move' ? `
-      <div class="field"><label for="e-light">Światło w nowym miejscu</label><select id="e-light" name="light">${options(LIGHTS, p.light)}</select></div>
-      <div class="field"><label class="check"><input type="checkbox" name="dry_air" ${p.dry_air ? 'checked' : ''}> Suche powietrze / blisko grzejnika</label></div>
+      <div class="field"><label for="e-light">${t('Światło w nowym miejscu')}</label><select id="e-light" name="light">${options(LIGHTS, p.light)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="dry_air" ${p.dry_air ? 'checked' : ''}> ${t('Suche powietrze / blisko grzejnika')}</label></div>
       <div class="preview" id="e-preview"><strong id="e-days"></strong> po tej zmianie</div>`
     : '';
   el.sheetBody.innerHTML = `
     <form id="event-form" autocomplete="off">
       ${extra}
-      <div class="field"><label for="e-date">Data</label><input type="date" id="e-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
-      <div class="field"><label for="e-note">${type === 'note' ? 'Treść' : 'Notatka (opcjonalnie)'}</label>
-        <textarea id="e-note" name="note" maxlength="500" ${type === 'note' ? 'required' : ''} placeholder="${type === 'fertilize' ? 'np. Biohumus 1:20' : type === 'treat' ? 'np. mydło potasowe na przędziorki' : ''}"></textarea></div>
+      <div class="field"><label for="e-date">${t('Data')}</label><input type="date" id="e-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
+      <div class="field"><label for="e-note">${t(type === 'note' ? 'Treść' : 'Notatka (opcjonalnie)')}</label>
+        <textarea id="e-note" name="note" maxlength="500" ${type === 'note' ? 'required' : ''} placeholder="${type === 'fertilize' ? t('np. Biohumus 1:20') : type === 'treat' ? t('np. mydło potasowe na przędziorki') : ''}"></textarea></div>
       <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="e-back">Wstecz</button>
-        <button type="submit" class="btn btn-primary">Zapisz</button>
+        <button type="button" class="btn btn-ghost" id="e-back">${t('Wstecz')}</button>
+        <button type="submit" class="btn btn-primary">${t('Zapisz')}</button>
       </div>
     </form>`;
   const form = $('#event-form');
@@ -1650,7 +1665,7 @@ function openEventForm(p, type) {
       if (type === 'repot') Object.assign(data, { pot_cm: Number(form.pot_cm.value), pot_material: form.pot_material.value, watered: form.watered.checked });
       if (type === 'move') Object.assign(data, { light: form.light.value, dry_air: form.dry_air.checked });
       await api('event', { json: { plant_id: p.id, type, date: form.date.value, note: form.note.value.trim(), data } });
-      toast(`Zapisano: ${def.label.toLowerCase()}.`);
+      toast(t('Zapisano: {label}.', { label: def.label.toLowerCase() }));
       closeSheet();
       await refresh();
     } catch (err) {
@@ -1663,27 +1678,28 @@ function openEventForm(p, type) {
 
 function openSplitForm(p) {
   const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${l}</option>`).join('');
-  if (el.sheet.hidden) openSheet(`✂️ Rozsadzenie: ${p.name}`); else el.sheetTitle.textContent = `✂️ Rozsadzenie: ${p.name}`;
+  const splitTitle = t('✂️ Rozsadzenie: {name}', { name: p.name });
+  if (el.sheet.hidden) openSheet(splitTitle); else el.sheetTitle.textContent = splitTitle;
   el.sheetBody.innerHTML = `
-    <p class="muted" style="margin:0 0 12px">Powstanie druga roślina tego samego gatunku z tymi samymi warunkami — poniżej ustaw jej nazwę i doniczkę. Obie dostaną wpis w historii. Doniczkę tej rośliny zmienisz osobno w „Edytuj” lub przez „Przesadzenie”.</p>
+    <p class="muted" style="margin:0 0 12px">${t('Powstanie druga roślina tego samego gatunku z tymi samymi warunkami — poniżej ustaw jej nazwę i doniczkę. Obie dostaną wpis w historii. Doniczkę tej rośliny zmienisz osobno w „Edytuj” lub przez „Przesadzenie”.')}</p>
     <form id="split-form" autocomplete="off">
       <div class="species-head">
         <span class="thumb" id="split-thumb"><img alt=""></span>
         <div><div class="sci">${esc(p.species) || '—'}</div><div class="com">${esc(p.common)}</div></div>
       </div>
-      <div class="photo-actions"><span class="btn pick">Zdjęcie nowej rośliny<input type="file" accept="image/*" id="split-photo"></span></div>
-      <div class="field"><label for="s-name">Nazwa nowej rośliny</label><input type="text" id="s-name" name="name" maxlength="80" required value="${esc(p.name)} (2)"></div>
+      <div class="photo-actions"><span class="btn pick">${t('Zdjęcie nowej rośliny')}<input type="file" accept="image/*" id="split-photo"></span></div>
+      <div class="field"><label for="s-name">${t('Nazwa nowej rośliny')}</label><input type="text" id="s-name" name="name" maxlength="80" required value="${esc(p.name)} (2)"></div>
       <div class="field">
-        <label for="s-pot">Średnica jej doniczki: <span class="range-value" id="s-pot-value">${p.pot_cm}</span> cm</label>
+        <label for="s-pot">${t('Średnica jej doniczki')}: <span class="range-value" id="s-pot-value">${p.pot_cm}</span> cm</label>
         <input type="range" id="s-pot" name="pot_cm" min="6" max="40" step="1" value="${p.pot_cm}">
       </div>
-      <div class="field"><label for="s-material">Doniczka</label><select id="s-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
-      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> Obie podlane przy rozsadzaniu</label></div>
-      <div class="field"><label for="s-date">Data</label><input type="date" id="s-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
-      <div class="field"><label for="s-note">Notatka (opcjonalnie)</label><textarea id="s-note" name="note" maxlength="500"></textarea></div>
+      <div class="field"><label for="s-material">${t('Doniczka')}</label><select id="s-material" name="pot_material">${options(MATERIALS, p.pot_material)}</select></div>
+      <div class="field"><label class="check"><input type="checkbox" name="watered" checked> ${t('Obie podlane przy rozsadzaniu')}</label></div>
+      <div class="field"><label for="s-date">${t('Data')}</label><input type="date" id="s-date" name="date" value="${todayStr()}" max="${todayStr()}" required></div>
+      <div class="field"><label for="s-note">${t('Notatka (opcjonalnie)')}</label><textarea id="s-note" name="note" maxlength="500"></textarea></div>
       <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="s-back">Wstecz</button>
-        <button type="submit" class="btn btn-primary">Rozsadź</button>
+        <button type="button" class="btn btn-ghost" id="s-back">${t('Wstecz')}</button>
+        <button type="submit" class="btn btn-primary">${t('Rozsadź')}</button>
       </div>
     </form>`;
   const form = $('#split-form');
@@ -1700,7 +1716,7 @@ function openSplitForm(p) {
       photoFull = full;
       $('#split-thumb').classList.add('has-photo');
       $('#split-thumb img').src = thumb;
-    } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+    } catch { toast(t('Nie udało się przetworzyć zdjęcia.'), 'error'); }
   });
   $('#s-back').addEventListener('click', () => openEventPicker(p));
   form.addEventListener('submit', async (e) => {
@@ -1712,7 +1728,7 @@ function openSplitForm(p) {
         id: p.id, name: form.name.value.trim(), pot_cm: Number(form.pot_cm.value), pot_material: form.pot_material.value,
         watered: form.watered.checked, date: form.date.value, note: form.note.value.trim(), photo, photo_full: photoFull,
       } });
-      toast(`Utworzono „${plant.name}”.`);
+      toast(t('Utworzono „{name}”.', { name: plant.name }));
       closeSheet();
       await refresh();
       location.hash = `plant/${plant.id}`;
@@ -1729,24 +1745,24 @@ function openSplitForm(p) {
 // ---------------------------------------------------------------------------
 function openCheck(p, mode) {
   const isDoctor = mode === 'doctor';
-  openSheet(isDoctor ? `Doktor: ${p.name}` : `Kontrola: ${p.name}`);
+  openSheet(t(isDoctor ? 'Doktor: {name}' : 'Kontrola: {name}', { name: p.name }));
   el.sheetBody.innerHTML = `
     <p class="muted" style="margin:0 0 12px">${isDoctor
-      ? 'Zrób wyraźne zdjęcie problematycznego miejsca (liść z bliska, łodyga, podłoże) i opisz, co Cię niepokoi. Jeśli do diagnozy zabraknie informacji, Doktor zada pytania.'
-      : 'Zrób zdjęcie całej rośliny w naturalnym świetle. Ocena obejmie stan liści, dopasowanie światła, doniczki i podlewania.'}</p>
+      ? t('Zrób wyraźne zdjęcie problematycznego miejsca (liść z bliska, łodyga, podłoże) i opisz, co Cię niepokoi. Jeśli do diagnozy zabraknie informacji, Doktor zada pytania.')
+      : t('Zrób zdjęcie całej rośliny w naturalnym świetle. Ocena obejmie stan liści, dopasowanie światła, doniczki i podlewania.')}</p>
     <form id="check-form" class="identify">
       <div class="photo-pick">
-        <button type="button" class="btn btn-primary" tabindex="-1" id="check-pick-label">Zrób zdjęcie / wybierz z galerii</button>
-        <input type="file" accept="image/*" multiple id="check-photo" aria-label="Zdjęcia (do 4)">
+        <button type="button" class="btn btn-primary" tabindex="-1" id="check-pick-label">${t('Zrób zdjęcie / wybierz z galerii')}</button>
+        <input type="file" accept="image/*" multiple id="check-photo" aria-label="${t('Zdjęcia (do 4)')}">
       </div>
       <div class="photo-row" id="check-previews"></div>
-      <p class="muted" id="check-photo-hint" style="margin:0">Możesz dodać do 4 zdjęć — np. cała roślina, chory liść z bliska, podłoże.</p>
+      <p class="muted" id="check-photo-hint" style="margin:0">${t('Możesz dodać do 4 zdjęć — np. cała roślina, chory liść z bliska, podłoże.')}</p>
       <div class="field">
-        <label for="check-text">${isDoctor ? 'Co jest nie tak?' : 'Uwagi (opcjonalnie)'}</label>
-        <textarea id="check-text" name="text" maxlength="1000" ${isDoctor ? 'required' : ''} placeholder="${isDoctor ? 'np. od tygodnia żółkną dolne liście, na spodzie białe kropki' : 'np. przesadzona 2 tygodnie temu'}"></textarea>
+        <label for="check-text">${t(isDoctor ? 'Co Cię niepokoi?' : 'Uwagi (opcjonalnie)')}</label>
+        <textarea id="check-text" name="text" maxlength="1000" ${isDoctor ? 'required' : ''} placeholder="${t(isDoctor ? 'np. od tygodnia żółkną dolne liście, na spodzie białe kropki' : 'np. przesadzona 2 tygodnie temu')}"></textarea>
       </div>
-      <button type="submit" class="btn btn-primary btn-block" id="check-submit" disabled>${isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan'}</button>
-      <p class="muted" style="margin:6px 0 0">Analiza trwa 15–60 s i kosztuje kilka–kilkanaście groszy za zdjęcie (Claude, płatność za użycie).</p>
+      <button type="submit" class="btn btn-primary btn-block" id="check-submit" disabled>${t(isDoctor ? 'Postaw diagnozę' : 'Sprawdź stan')}</button>
+      <p class="muted" style="margin:6px 0 0">${t('Analiza trwa 15–60 s i kosztuje kilka–kilkanaście groszy za zdjęcie (Claude, płatność za użycie).')}</p>
     </form>`;
 
   const uploads = []; // {blob, thumb}
@@ -1754,7 +1770,7 @@ function openCheck(p, mode) {
   const renderPreviews = () => {
     $('#check-previews').innerHTML = uploads.map((u) => `<img src="${u.thumb}" alt="">`).join('');
     $('#check-submit').disabled = uploads.length === 0;
-    $('#check-pick-label').textContent = uploads.length ? `Dodaj kolejne zdjęcie (${uploads.length}/${MAX})` : 'Zrób zdjęcie / wybierz z galerii';
+    $('#check-pick-label').textContent = uploads.length ? t('Dodaj kolejne zdjęcie ({n}/{max})', { n: uploads.length, max: MAX }) : t('Zrób zdjęcie / wybierz z galerii');
     $('#check-photo').disabled = uploads.length >= MAX;
   };
   $('#check-photo').addEventListener('change', async (e) => {
@@ -1764,7 +1780,7 @@ function openCheck(p, mode) {
       try {
         const out = await processImage(file);
         uploads.push({ blob: out.upload, thumb: out.thumb });
-      } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
+      } catch { toast(t('Nie udało się przetworzyć zdjęcia.'), 'error'); }
     }
     renderPreviews();
   });
@@ -1778,7 +1794,7 @@ function openCheck(p, mode) {
     form.insertAdjacentElement('afterend', host);
     form.hidden = true;
     intro.hidden = true;
-    el.sheetTitle.textContent = isDoctor ? 'Doktor myśli…' : 'Sprawdzam…';
+    el.sheetTitle.textContent = t(isDoctor ? 'Doktor myśli…' : 'Sprawdzam…');
     const think = startThinking(host, mode);
     try {
       const fd = new FormData();
@@ -1795,7 +1811,7 @@ function openCheck(p, mode) {
       host.remove();
       form.hidden = false;
       intro.hidden = false;
-      el.sheetTitle.textContent = isDoctor ? `Doktor: ${p.name}` : `Kontrola: ${p.name}`;
+      el.sheetTitle.textContent = t(isDoctor ? 'Doktor: {name}' : 'Kontrola: {name}', { name: p.name });
       toast(err.message, 'error', 7000);
     }
   });
@@ -1809,7 +1825,7 @@ function openCheck(p, mode) {
 const WEB_OK_KEY = 'greenly.webok';
 let installPrompt = null; // Chrome/Android/desktop: deferred beforeinstallprompt
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; $('#install-native')?.removeAttribute('hidden'); });
-window.addEventListener('appinstalled', () => { installPrompt = null; localStorage.setItem(WEB_OK_KEY, 'installed'); closeInstall(); toast('greenLy zainstalowane — otwórz aplikację z ikony.'); });
+window.addEventListener('appinstalled', () => { installPrompt = null; localStorage.setItem(WEB_OK_KEY, 'installed'); closeInstall(); toast(t('greenLy zainstalowane — otwórz aplikację z ikony.')); });
 
 function shouldNagInstall() {
   return !isStandalone && !localStorage.getItem(WEB_OK_KEY);
@@ -1819,24 +1835,24 @@ function installSteps() {
   const ua = navigator.userAgent;
   if (isIOS) {
     const chrome = /CriOS/.test(ua);
-    return { platform: 'iPhone / iPad', steps: [
-      `Stuknij <b>Udostępnij</b> ${chrome ? 'w menu Chrome (ikona ze strzałką w górę)' : '(kwadrat ze strzałką w górę na dolnym pasku Safari)'}.`,
-      'Przewiń listę i wybierz <b>Do ekranu początkowego</b>.',
-      'Stuknij <b>Dodaj</b> w prawym górnym rogu.',
-      'Otwieraj greenLy <b>z ikony</b> na ekranie początkowym i tam włącz powiadomienia.',
+    return { platform: t('iPhone / iPad'), steps: [
+      t('Stuknij <b>Udostępnij</b> {where}.', { where: t(chrome ? 'w menu Chrome (ikona ze strzałką w górę)' : '(kwadrat ze strzałką w górę na dolnym pasku Safari)') }),
+      t('Przewiń listę i wybierz <b>Do ekranu początkowego</b>.'),
+      t('Stuknij <b>Dodaj</b> w prawym górnym rogu.'),
+      t('Otwieraj greenLy <b>z ikony</b> na ekranie początkowym i tam włącz powiadomienia.'),
     ] };
   }
   if (/Android/.test(ua)) {
     return { platform: 'Android', steps: [
-      'Stuknij <b>⋮</b> (menu Chrome) w prawym górnym rogu.',
-      'Wybierz <b>Zainstaluj aplikację</b> albo <b>Dodaj do ekranu głównego</b>.',
-      'Potwierdź. Otwieraj greenLy z ikony.',
+      t('Stuknij <b>⋮</b> (menu Chrome) w prawym górnym rogu.'),
+      t('Wybierz <b>Zainstaluj aplikację</b> albo <b>Dodaj do ekranu głównego</b>.'),
+      t('Potwierdź. Otwieraj greenLy z ikony.'),
     ] };
   }
-  return { platform: 'Komputer', steps: [
-    'Chrome / Edge: kliknij ikonę instalacji po prawej stronie paska adresu albo <b>⋮ → Zainstaluj greenLy</b>.',
-    'Safari (macOS): <b>Plik → Dodaj do Docka</b>.',
-    'Na telefonie otwórz ten sam adres i dodaj greenLy do ekranu początkowego — tam działają powiadomienia.',
+  return { platform: t('Komputer'), steps: [
+    t('Chrome / Edge: kliknij ikonę instalacji po prawej stronie paska adresu albo <b>⋮ → Zainstaluj greenLy</b>.'),
+    t('Safari (macOS): <b>Plik → Dodaj do Docka</b>.'),
+    t('Na telefonie otwórz ten sam adres i dodaj greenLy do ekranu początkowego — tam działają powiadomienia.'),
   ] };
 }
 
@@ -1845,19 +1861,19 @@ function openInstall({ consent = false } = {}) {
   const { platform, steps } = installSteps();
   el.installBody.innerHTML = `
     <div class="install-head"><img src="./img/icon-192.png" alt="" width="56" height="56"><div>
-      <h2 id="install-title">Zainstaluj greenLy</h2>
-      <p class="muted">Ta strona jest aplikacją — najlepiej działa z ekranu początkowego.</p></div></div>
+      <h2 id="install-title">${t('Zainstaluj greenLy')}</h2>
+      <p class="muted">${t('Ta strona jest aplikacją — najlepiej działa z ekranu początkowego.')}</p></div></div>
     <ul class="install-why">
-      <li><span class="ico" aria-hidden="true">🔔</span><span><b>Przypomnienia o podlewaniu</b> przychodzą tylko do zainstalowanej aplikacji${isIOS ? ' (na iPhonie w przeglądarce nie działają wcale)' : ''}.</span></li>
-      <li><span class="ico" aria-hidden="true">📱</span><span>Pełny ekran, własna ikona, działa offline.</span></li>
+      <li><span class="ico" aria-hidden="true">🔔</span><span>${t('<b>Przypomnienia o podlewaniu</b> przychodzą tylko do zainstalowanej aplikacji{ios}.', { ios: isIOS ? t(' (na iPhonie w przeglądarce nie działają wcale)') : '' })}</span></li>
+      <li><span class="ico" aria-hidden="true">📱</span><span>${t('Pełny ekran, własna ikona, działa offline.')}</span></li>
     </ul>
     <p class="install-platform">${esc(platform)}</p>
-    <ol class="install-steps">${steps.map((t) => `<li>${t}</li>`).join('')}</ol>
-    <button type="button" class="btn btn-primary btn-block" id="install-native" ${installPrompt ? '' : 'hidden'}>Zainstaluj teraz</button>
+    <ol class="install-steps">${steps.map((step) => `<li>${step}</li>`).join('')}</ol>
+    <button type="button" class="btn btn-primary btn-block" id="install-native" ${installPrompt ? '' : 'hidden'}>${t('Zainstaluj teraz')}</button>
     ${consent ? `
-      <label class="install-consent"><input type="checkbox" id="install-ok"> Rozumiem, że bez instalacji nie dostanę przypomnień, i chcę używać greenLy w przeglądarce.</label>
-      <button type="button" class="btn btn-block" id="install-web" disabled>Używaj w przeglądarce</button>`
-      : '<button type="button" class="btn btn-block" id="install-close">Zamknij</button>'}`;
+      <label class="install-consent"><input type="checkbox" id="install-ok"> ${t('Rozumiem, że bez instalacji nie dostanę przypomnień, i chcę używać greenLy w przeglądarce.')}</label>
+      <button type="button" class="btn btn-block" id="install-web" disabled>${t('Używaj w przeglądarce')}</button>`
+      : `<button type="button" class="btn btn-block" id="install-close">${t('Zamknij')}</button>`}`;
   el.installBackdrop.hidden = false;
   el.installModal.hidden = false;
   void el.installModal.offsetHeight;
@@ -1898,20 +1914,20 @@ function openNoKey() {
   const globalMissing = u.key_source === 'global' && !u.has_key;
   $('#nokey-body').innerHTML = globalMissing ? `
     <span class="modal-ico" aria-hidden="true">🔑</span>
-    <h2 id="nokey-title">Jeszcze chwila</h2>
-    <p class="muted">Administrator przypisał Ci wspólny klucz Claude, ale jeszcze go nie ustawił. Gdy to zrobi, Kontrola, Doktor i opisy gatunków zaczną działać same — nic nie musisz robić.</p>
-    <button type="button" class="btn btn-primary btn-block" id="nokey-close">Rozumiem</button>`
+    <h2 id="nokey-title">${t('Jeszcze chwila')}</h2>
+    <p class="muted">${t('Administrator przypisał Ci wspólny klucz Claude, ale jeszcze go nie ustawił. Gdy to zrobi, Kontrola, Doktor i opisy gatunków zaczną działać same — nic nie musisz robić.')}</p>
+    <button type="button" class="btn btn-primary btn-block" id="nokey-close">${t('Rozumiem')}</button>`
   : `
     <span class="modal-ico" aria-hidden="true">🌿</span>
-    <h2 id="nokey-title">Siemano! Tu potrzebny jest Twój klucz Claude</h2>
-    <p class="muted">Kontrola, Doktor i opisy gatunków to analizy robione przez Claude (AI od Anthropic). Żeby z nich korzystać, podepnij w ustawieniach konta <b>własny klucz API</b>. Rozliczasz się bezpośrednio z Anthropic, greenLy nic nie dolicza.</p>
+    <h2 id="nokey-title">${t('Siemano! Tu potrzebny jest Twój klucz Claude')}</h2>
+    <p class="muted">${t('Kontrola, Doktor i opisy gatunków to analizy robione przez Claude (AI od Anthropic). Żeby z nich korzystać, podepnij w ustawieniach konta <b>własny klucz API</b>. Rozliczasz się bezpośrednio z Anthropic, greenLy nic nie dolicza.')}</p>
     <ul class="nokey-facts">
-      <li><span class="ico" aria-hidden="true">💸</span><span>Płacisz z góry doładowanymi kredytami, bez abonamentu. Jedna analiza ze zdjęciem to zwykle <b>3–8 centów</b> na Claude Opus 5 albo <b>2–3 centy</b> na Sonnet 5.</span></li>
-      <li><span class="ico" aria-hidden="true">🧮</span><span><b>5 $</b> wystarcza mniej więcej na <b>60–150 analiz</b> na Opus 5 albo <b>około 200</b> na Sonnet 5. Nowe konto Anthropic dostaje też małą pulę darmowych kredytów na start.</span></li>
-      <li><span class="ico" aria-hidden="true">🔒</span><span>Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki. W Koncie masz instrukcję krok po kroku, jak go założyć.</span></li>
+      <li><span class="ico" aria-hidden="true">💸</span><span>${t('Płacisz z góry doładowanymi kredytami, bez abonamentu. Jedna analiza ze zdjęciem to zwykle <b>3–8 centów</b> na Claude Opus 5 albo <b>2–3 centy</b> na Sonnet 5.')}</span></li>
+      <li><span class="ico" aria-hidden="true">🧮</span><span>${t('<b>5 $</b> wystarcza mniej więcej na <b>60–150 analiz</b> na Opus 5 albo <b>około 200</b> na Sonnet 5. Nowe konto Anthropic dostaje też małą pulę darmowych kredytów na start.')}</span></li>
+      <li><span class="ico" aria-hidden="true">🔒</span><span>${t('Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki. W Koncie masz instrukcję krok po kroku, jak go założyć.')}</span></li>
     </ul>
-    <button type="button" class="btn btn-primary btn-block" id="nokey-go">Podłącz klucz w Koncie</button>
-    <button type="button" class="btn btn-block" id="nokey-close" style="margin-top:8px">Może później</button>`;
+    <button type="button" class="btn btn-primary btn-block" id="nokey-go">${t('Podłącz klucz w Koncie')}</button>
+    <button type="button" class="btn btn-block" id="nokey-close" style="margin-top:8px">${t('Może później')}</button>`;
   $('#nokey-backdrop').hidden = false;
   $('#nokey-modal').hidden = false;
   void $('#nokey-modal').offsetHeight;
@@ -1941,51 +1957,51 @@ function withAi(fn) {
 // Step-by-step, from platform.claude.com/docs/en/get-api-key and the Console billing help — keep in sync with them.
 const KEY_HOWTO = `
   <details class="howto">
-    <summary>Jak założyć klucz Claude — krok po kroku</summary>
+    <summary>${t('Jak założyć klucz Claude — krok po kroku')}</summary>
     <ol>
-      <li>Wejdź na <a href="https://platform.claude.com/" target="_blank" rel="noopener">platform.claude.com</a> (Claude Console) i zaloguj się albo załóż konto — mail lub konto Google.</li>
-      <li>Doładuj kredyty: <b>Settings → Billing → Buy credits</b>, wpisz kwotę (np. 5 $) i zapłać kartą. Bez kredytów API nie odpowiada; nowe konto ma małą darmową pulę na start. Kredyty są ważne rok. W sekcji <b>Auto-reload</b> możesz włączyć automatyczne doładowanie.</li>
-      <li>Otwórz <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a> i kliknij <b>Create key</b>.</li>
-      <li>Nadaj nazwę (np. <i>greenLy</i>), wybierz ważność (<i>expiration</i>) i zostaw <b>Linked account</b> ustawione na siebie. Zatwierdź.</li>
-      <li>Skopiuj klucz — zaczyna się od <code>sk-ant-</code> i Console pokaże go <b>tylko raz</b>. Jeśli go zgubisz, po prostu utwórz nowy.</li>
-      <li>Wklej go tutaj i kliknij <b>Zapisz</b>. greenLy sprawdzi klucz w Anthropic zanim go zapisze.</li>
+      <li>${t('Wejdź na <a href="https://platform.claude.com/" target="_blank" rel="noopener">platform.claude.com</a> (Claude Console) i zaloguj się albo załóż konto — mail lub konto Google.')}</li>
+      <li>${t('Doładuj kredyty: <b>Settings → Billing → Buy credits</b>, wpisz kwotę (np. 5 $) i zapłać kartą. Bez kredytów API nie odpowiada; nowe konto ma małą darmową pulę na start. Kredyty są ważne rok. W sekcji <b>Auto-reload</b> możesz włączyć automatyczne doładowanie.')}</li>
+      <li>${t('Otwórz <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a> i kliknij <b>Create key</b>.')}</li>
+      <li>${t('Nadaj nazwę (np. <i>greenLy</i>), wybierz ważność (<i>expiration</i>) i zostaw <b>Linked account</b> ustawione na siebie. Zatwierdź.')}</li>
+      <li>${t('Skopiuj klucz — zaczyna się od <code>sk-ant-</code> i Console pokaże go <b>tylko raz</b>. Jeśli go zgubisz, po prostu utwórz nowy.')}</li>
+      <li>${t('Wklej go tutaj i kliknij <b>Zapisz</b>. greenLy sprawdzi klucz w Anthropic zanim go zapisze.')}</li>
     </ol>
-    <p class="hint" style="margin:8px 0 0">Koszty: Opus 5 to 5 $ za milion tokenów wejścia i 25 $ za milion wyjścia, Sonnet 5 odpowiednio 2 $ i 10 $. Jedna analiza ze zdjęciem to 3–8 centów (Opus) albo 2–3 centy (Sonnet); opis gatunku jest tańszy. Zużycie widać w Console w zakładce <b>Usage</b>, a przybliżony koszt każdej analizy pod jej wynikiem w greenLy.</p>
+    <p class="hint" style="margin:8px 0 0">${t('Koszty: Opus 5 to 5 $ za milion tokenów wejścia i 25 $ za milion wyjścia, Sonnet 5 odpowiednio 2 $ i 10 $. Jedna analiza ze zdjęciem to 3–8 centów (Opus) albo 2–3 centy (Sonnet); opis gatunku jest tańszy. Zużycie widać w Console w zakładce <b>Usage</b>, a przybliżony koszt każdej analizy pod jej wynikiem w greenLy.')}</p>
   </details>`;
 
 // ---------------------------------------------------------------------------
 // account sheet: Anthropic key + model, password, install help, logout
 // ---------------------------------------------------------------------------
-const MODEL_OPTIONS = [['claude-opus-5', 'Claude Opus 5 — najdokładniejszy'], ['claude-sonnet-5', 'Claude Sonnet 5 — tańszy']];
-const EFFORT_OPTIONS = [['low', 'niski — szybko i tanio'], ['medium', 'średni — domyślny'], ['high', 'wysoki — wnikliwie, drożej']];
+const MODEL_OPTIONS = [['claude-opus-5', t('Claude Opus 5 — najdokładniejszy')], ['claude-sonnet-5', t('Claude Sonnet 5 — tańszy')]];
+const EFFORT_OPTIONS = [['low', t('niski — szybko i tanio')], ['medium', t('średni — domyślny')], ['high', t('wysoki — wnikliwie, drożej')]];
 
 function openAccount({ focusKey = false } = {}) {
   const u = state.user ?? { login: '…', has_key: false, model: 'claude-opus-5', effort: 'medium' };
   const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
-  openSheet('Konto');
+  openSheet(t('Konto'));
   el.sheetBody.innerHTML = `
-    <p class="account-login">Zalogowano jako <b>${esc(u.login)}</b></p>
+    <p class="account-login">${t('Zalogowano jako')} <b>${esc(u.login)}</b></p>
 
     <section class="section">
-      <h2>Klucz Anthropic (Claude)</h2>
+      <h2>${t('Klucz Anthropic (Claude)')}</h2>
       ${u.key_source === 'global' ? `<div class="card">
-        <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? 'Na Twoje konto jest przypisany globalny klucz Claude' : 'Administrator przypisał Ci globalny klucz, ale nie jest jeszcze ustawiony — analizy AI są wyłączone'}</p>
-        <p class="muted" style="margin:0">Kontrola, Doktor i opisy gatunków działają na kluczu administratora i nie obciążają Twojego konta Anthropic. Model: <b>${esc(label(MODEL_OPTIONS, u.model))}</b> · dokładność: <b>${esc(label(EFFORT_OPTIONS, u.effort))}</b>. Własnego klucza nie ustawisz — o zmianę poproś administratora.</p>
+        <p class="key-status ${u.has_key ? 'on' : ''}">${t(u.has_key ? 'Na Twoje konto jest przypisany globalny klucz Claude' : 'Administrator przypisał Ci globalny klucz, ale nie jest jeszcze ustawiony — analizy AI są wyłączone')}</p>
+        <p class="muted" style="margin:0">${t('Kontrola, Doktor i opisy gatunków działają na kluczu administratora i nie obciążają Twojego konta Anthropic. Model: <b>{model}</b> · dokładność: <b>{effort}</b>. Własnego klucza nie ustawisz — o zmianę poproś administratora.', { model: esc(label(MODEL_OPTIONS, u.model)), effort: esc(label(EFFORT_OPTIONS, u.effort)) })}</p>
       </div>` : `<div class="card">
-        <p class="muted" style="margin:0 0 10px">Kontrola, Doktor i opisy gatunków działają na Twoim własnym kluczu i obciążają Twoje konto Anthropic (kilka centów za analizę). Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki.</p>
-        <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? `Klucz ustawiony${u.key_hint ? ` · kończy się na …${esc(u.key_hint)}` : ''}` : 'Brak klucza — analizy AI są wyłączone'}</p>
+        <p class="muted" style="margin:0 0 10px">${t('Kontrola, Doktor i opisy gatunków działają na Twoim własnym kluczu i obciążają Twoje konto Anthropic (kilka centów za analizę). Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki.')}</p>
+        <p class="key-status ${u.has_key ? 'on' : ''}">${u.has_key ? `${t('Klucz ustawiony')}${u.key_hint ? ` · ${t('kończy się na …{hint}', { hint: esc(u.key_hint) })}` : ''}` : t('Brak klucza — analizy AI są wyłączone')}</p>
         <form id="key-form" autocomplete="off" novalidate>
           <div class="field">
-            <label for="acc-key">${u.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API'}</label>
+            <label for="acc-key">${t(u.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API')}</label>
             <input type="password" id="acc-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false">
           </div>
           <div class="field-row">
-            <div class="field"><label for="acc-model">Model</label><select id="acc-model">${options(MODEL_OPTIONS, u.model)}</select></div>
-            <div class="field"><label for="acc-effort">Dokładność</label><select id="acc-effort">${options(EFFORT_OPTIONS, u.effort)}</select></div>
+            <div class="field"><label for="acc-model">${t('Model')}</label><select id="acc-model">${options(MODEL_OPTIONS, u.model)}</select></div>
+            <div class="field"><label for="acc-effort">${t('Dokładność')}</label><select id="acc-effort">${options(EFFORT_OPTIONS, u.effort)}</select></div>
           </div>
           <div class="form-actions">
-            ${u.has_key ? '<button type="button" class="btn btn-danger" id="acc-key-remove">Usuń klucz</button>' : ''}
-            <button type="submit" class="btn btn-primary">Zapisz</button>
+            ${u.has_key ? `<button type="button" class="btn btn-danger" id="acc-key-remove">${t('Usuń klucz')}</button>` : ''}
+            <button type="submit" class="btn btn-primary">${t('Zapisz')}</button>
           </div>
         </form>
         ${KEY_HOWTO}
@@ -1993,30 +2009,32 @@ function openAccount({ focusKey = false } = {}) {
     </section>
 
     <section class="section">
-      <h2>Hasło</h2>
+      <h2>${t('Hasło')}</h2>
       <form class="card" id="pass-form" novalidate>
-        <div class="field"><label for="acc-pass-old">Obecne hasło</label><input type="password" id="acc-pass-old" autocomplete="current-password"></div>
-        <div class="field"><label for="acc-pass-new">Nowe hasło (min. 8 znaków)</label><input type="password" id="acc-pass-new" autocomplete="new-password"></div>
-        <div class="form-actions"><button type="submit" class="btn btn-primary">Zmień hasło</button></div>
+        <div class="field"><label for="acc-pass-old">${t('Obecne hasło')}</label><input type="password" id="acc-pass-old" autocomplete="current-password"></div>
+        <div class="field"><label for="acc-pass-new">${t('Nowe hasło (min. 8 znaków)')}</label><input type="password" id="acc-pass-new" autocomplete="new-password"></div>
+        <div class="form-actions"><button type="submit" class="btn btn-primary">${t('Zmień hasło')}</button></div>
       </form>
     </section>
 
     <section class="section">
-      <h2>Aplikacja</h2>
+      <h2>${t('Aplikacja')}</h2>
       <div class="card account-app">
-        ${isStandalone ? '<p class="muted" style="margin:0 0 10px">Używasz zainstalowanej aplikacji. 👍</p>' : '<p class="muted" style="margin:0 0 10px">Używasz greenLy w przeglądarce — przypomnienia działają dopiero po instalacji.</p>'}
+        <p class="muted" style="margin:0 0 10px">${t(isStandalone ? 'Używasz zainstalowanej aplikacji. 👍' : 'Używasz greenLy w przeglądarce — przypomnienia działają dopiero po instalacji.')}</p>
         <div class="inline-actions" style="margin:0">
-          <button type="button" class="btn" id="acc-install">Jak zainstalować</button>
-          <button type="button" class="btn" id="acc-refresh">Odśwież aplikację</button>
+          <button type="button" class="btn" id="acc-install">${t('Jak zainstalować')}</button>
+          <button type="button" class="btn" id="acc-refresh">${t('Odśwież aplikację')}</button>
+          <button type="button" class="btn" id="acc-lang">${t('Język')}: ${lang === 'pl' ? 'Polski' : 'English'}</button>
         </div>
       </div>
     </section>
 
-    ${u.is_admin ? `<section class="section"><h2>Administracja</h2>
-      <div class="card"><p class="muted" style="margin:0 0 10px">Użytkownicy, kody zaproszeń, resetowanie haseł.</p>
-      <button type="button" class="btn btn-soft btn-block" id="acc-admin">Otwórz panel administratora</button></div></section>` : ''}
+    ${u.is_admin ? `<section class="section"><h2>${t('Administracja')}</h2>
+      <div class="card"><p class="muted" style="margin:0 0 10px">${t('Użytkownicy, kody zaproszeń, resetowanie haseł.')}</p>
+      <button type="button" class="btn btn-soft btn-block" id="acc-admin">${t('Otwórz panel administratora')}</button></div></section>` : ''}
 
-    <button type="button" class="btn btn-danger btn-block" id="acc-logout">Wyloguj</button>`;
+    <button type="button" class="btn btn-danger btn-block" id="acc-logout">${t('Wyloguj')}</button>`;
+  $('#acc-lang').addEventListener('click', () => switchLang(lang === 'pl' ? 'en' : 'pl'));
   $('#acc-admin')?.addEventListener('click', () => openAdmin());
   if (focusKey && $('#acc-key')) {
     $('.howto', el.sheetBody).open = true;
@@ -2027,33 +2045,33 @@ function openAccount({ focusKey = false } = {}) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const key = $('#acc-key').value.trim();
-    if (!validate([[$('#acc-key'), (v) => (v && !/^sk-ant-/.test(v) ? 'Klucz Anthropic zaczyna się od sk-ant-…' : null)]])) return;
+    if (!validate([[$('#acc-key'), (v) => (v && !/^sk-ant-/.test(v) ? t('Klucz Anthropic zaczyna się od sk-ant-…') : null)]])) return;
     const payload = { model: $('#acc-model').value, effort: $('#acc-effort').value };
     if (key) payload.anthropic_key = key;
     btn.disabled = true;
-    btn.textContent = key ? 'Sprawdzam klucz…' : 'Zapisuję…';
+    btn.textContent = t(key ? 'Sprawdzam klucz…' : 'Zapisuję…');
     try {
       const { user } = await api('account', { json: payload });
       state.user = user;
       state.ai = !!user.has_key;
       cacheSet('plants', { plants: state.plants, user });
-      toast(key ? 'Klucz działa — analizy AI włączone.' : 'Zapisano.');
+      toast(t(key ? 'Klucz działa — analizy AI włączone.' : 'Zapisano.'));
       openAccount();
       if (state.plantView) showPlant(state.plantView);
     } catch (err) {
-      if (key && /klucz/i.test(err.message)) fieldError($('#acc-key'), err.message); else toast(err.message, 'error', 6000);
+      if (key && /klucz|key/i.test(err.message)) fieldError($('#acc-key'), err.message); else toast(err.message, 'error', 6000);
       btn.disabled = false;
-      btn.textContent = 'Zapisz';
+      btn.textContent = t('Zapisz');
     }
   });
   $('#acc-key-remove')?.addEventListener('click', async () => {
-    if (!confirm('Usunąć klucz? Analizy AI przestaną działać do czasu dodania nowego.')) return;
+    if (!confirm(t('Usunąć klucz? Analizy AI przestaną działać do czasu dodania nowego.'))) return;
     try {
       const { user } = await api('account', { json: { anthropic_key: null } });
       state.user = user;
       state.ai = false;
       cacheSet('plants', { plants: state.plants, user });
-      toast('Klucz usunięty.');
+      toast(t('Klucz usunięty.'));
       openAccount();
       if (state.plantView) showPlant(state.plantView);
     } catch (err) { toast(err.message, 'error'); }
@@ -2062,19 +2080,19 @@ function openAccount({ focusKey = false } = {}) {
     e.preventDefault();
     const oldPw = $('#acc-pass-old');
     const newPw = $('#acc-pass-new');
-    if (!validate([[oldPw, required('Wpisz obecne hasło.')], [newPw, passwordRule]])) return;
+    if (!validate([[oldPw, required(t('Wpisz obecne hasło.'))], [newPw, passwordRule]])) return;
     const btn = e.target.querySelector('button');
     btn.disabled = true;
     try {
       await api('account', { json: { current_password: oldPw.value, password: newPw.value } });
-      toast('Hasło zmienione. Inne urządzenia zostały wylogowane.');
+      toast(t('Hasło zmienione. Inne urządzenia zostały wylogowane.'));
       e.target.reset();
     } catch (err) {
-      if (!serverFieldError(err.message, [['obecne', oldPw], ['hasło', newPw]])) toast(err.message, 'error', 5000);
+      if (!serverFieldError(err.message, [['obecne', oldPw], ['current', oldPw], ['hasło', newPw], ['password', newPw]])) toast(err.message, 'error', 5000);
     } finally { btn.disabled = false; }
   });
   $('#acc-install').addEventListener('click', () => { closeSheet(); openInstall(); });
-  $('#acc-refresh').addEventListener('click', () => { toast('Odświeżam…'); hardRefresh(); });
+  $('#acc-refresh').addEventListener('click', () => { toast(t('Odświeżam…')); hardRefresh(); });
   $('#acc-logout').addEventListener('click', () => logout());
 }
 
@@ -2082,16 +2100,16 @@ function openAccount({ focusKey = false } = {}) {
 // admin panel: users + invite codes
 // ---------------------------------------------------------------------------
 const fmtAgo = (iso) => {
-  if (!iso) return 'nigdy';
+  if (!iso) return t('nigdy');
   const d = (Date.now() - new Date(iso)) / 86400000;
-  if (d < 1 / 24) return 'przed chwilą';
-  if (d < 1) return `${Math.round(d * 24)} h temu`;
-  if (d < 30) return `${Math.round(d)} ${dni(Math.round(d))} temu`;
+  if (d < 1 / 24) return t('przed chwilą');
+  if (d < 1) return t('{n} h temu', { n: Math.round(d * 24) });
+  if (d < 30) return t('{n} temu', { n: days(Math.round(d)) });
   return fmtDate(iso);
 };
 
 async function openAdmin() {
-  openSheet('Administracja');
+  openSheet(t('Administracja'));
   el.sheetBody.innerHTML = '<div class="skel" style="min-height:140px"></div>';
   let data;
   try { data = await api('admin'); } catch (err) { toast(err.message, 'error'); closeSheet(); return; }
@@ -2102,93 +2120,93 @@ function renderAdmin({ users, invites, config_invite, global: g }) {
   const me = state.user?.login;
   const ctx = { users, invites, config_invite, global: g };
   const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
-  const keyLabel = (u) => (u.use_global_key ? (g.has_key ? 'globalny' : 'globalny (nieustawiony)') : u.has_key ? 'własny' : 'brak');
+  const keyLabel = (u) => t(u.use_global_key ? (g.has_key ? 'globalny' : 'globalny (nieustawiony)') : u.has_key ? 'własny' : 'brak');
   const userRow = (u) => `<li class="adm-row" data-id="${u.id}">
     <div class="adm-main">
-      <b>${esc(u.login)}</b>${u.is_admin ? ' <span class="chip soft">admin</span>' : ''}${u.login === me ? ' <span class="muted">(ty)</span>' : ''}
-      <div class="adm-meta">${u.plants} ${u.plants === 1 ? 'roślina' : u.plants >= 2 && u.plants <= 4 ? 'rośliny' : 'roślin'} · klucz AI: ${keyLabel(u)} · powiadomienia: ${u.subs} · ostatnio: ${fmtAgo(u.last_seen)}${u.invite_code ? ` · kod: ${esc(u.invite_code)}` : ''}</div>
+      <b>${esc(u.login)}</b>${u.is_admin ? ` <span class="chip soft">${t('admin')}</span>` : ''}${u.login === me ? ` <span class="muted">${t('(ty)')}</span>` : ''}
+      <div class="adm-meta">${u.plants} ${plural(u.plants, ['roślina', 'rośliny', 'roślin'], ['plant', 'plants'])} · ${t('klucz AI')}: ${keyLabel(u)} · ${t('powiadomienia')}: ${u.subs} · ${t('ostatnio')}: ${fmtAgo(u.last_seen)}${u.invite_code ? ` · ${t('kod')}: ${esc(u.invite_code)}` : ''}</div>
     </div>
     <div class="adm-actions">
-      <button type="button" class="btn ${u.use_global_key ? 'btn-soft' : ''}" data-act="${u.use_global_key ? 'unglobal' : 'global'}">${u.use_global_key ? 'Globalny klucz: wł.' : 'Przypisz globalny klucz'}</button>
-      <button type="button" class="btn" data-act="password">Hasło</button>
-      ${u.login === me ? '' : `<button type="button" class="btn" data-act="${u.is_admin ? 'unadmin' : 'admin'}">${u.is_admin ? 'Odbierz admina' : 'Nadaj admina'}</button>
-      <button type="button" class="btn btn-danger" data-act="delete">Usuń</button>`}
+      <button type="button" class="btn ${u.use_global_key ? 'btn-soft' : ''}" data-act="${u.use_global_key ? 'unglobal' : 'global'}">${t(u.use_global_key ? 'Globalny klucz: wł.' : 'Przypisz globalny klucz')}</button>
+      <button type="button" class="btn" data-act="password">${t('Hasło')}</button>
+      ${u.login === me ? '' : `<button type="button" class="btn" data-act="${u.is_admin ? 'unadmin' : 'admin'}">${t(u.is_admin ? 'Odbierz admina' : 'Nadaj admina')}</button>
+      <button type="button" class="btn btn-danger" data-act="delete">${t('Usuń')}</button>`}
     </div>
   </li>`;
   const inviteRow = (i) => `<li class="adm-row ${i.disabled || i.uses >= i.max_uses ? 'is-off' : ''}" data-code="${esc(i.code)}">
     <div class="adm-main">
       <b class="adm-code">${esc(i.code)}</b>${i.note ? ` <span class="muted">— ${esc(i.note)}</span>` : ''}
-      <div class="adm-meta">użyto ${i.uses}/${i.max_uses}${i.disabled ? ' · wyłączony' : ''} · ${fmtDate(i.created_at)}</div>
+      <div class="adm-meta">${t('użyto {u}/{m}', { u: i.uses, m: i.max_uses })}${i.disabled ? ` · ${t('wyłączony')}` : ''} · ${fmtDate(i.created_at)}</div>
     </div>
     <div class="adm-actions">
-      <button type="button" class="btn" data-act="copy">Kopiuj</button>
-      <button type="button" class="btn" data-act="${i.disabled ? 'enable' : 'disable'}">${i.disabled ? 'Włącz' : 'Wyłącz'}</button>
-      <button type="button" class="btn btn-danger" data-act="delete">Usuń</button>
+      <button type="button" class="btn" data-act="copy">${t('Kopiuj')}</button>
+      <button type="button" class="btn" data-act="${i.disabled ? 'enable' : 'disable'}">${t(i.disabled ? 'Włącz' : 'Wyłącz')}</button>
+      <button type="button" class="btn btn-danger" data-act="delete">${t('Usuń')}</button>
     </div>
   </li>`;
 
   el.sheetBody.innerHTML = `
     <section class="section">
-      <h2>Globalny klucz Claude</h2>
+      <h2>${t('Globalny klucz Claude')}</h2>
       <form class="card" id="adm-global-form" autocomplete="off" novalidate>
-        <p class="muted" style="margin:0 0 10px">Jeden klucz dla wybranych użytkowników: analizy idą na Twoje konto Anthropic. Komu go przypiszesz (przycisk przy użytkowniku), ten nie może ustawić własnego klucza i widzi informację, że korzysta z globalnego.</p>
-        <p class="key-status ${g.has_key ? 'on' : ''}">${g.has_key ? `Klucz ustawiony · kończy się na …${esc(g.key_hint ?? '')}` : 'Brak globalnego klucza'}</p>
-        <div class="field"><label for="adm-key">${g.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API'}</label><input type="password" id="adm-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false"></div>
+        <p class="muted" style="margin:0 0 10px">${t('Jeden klucz dla wybranych użytkowników: analizy idą na Twoje konto Anthropic. Komu go przypiszesz (przycisk przy użytkowniku), ten nie może ustawić własnego klucza i widzi informację, że korzysta z globalnego.')}</p>
+        <p class="key-status ${g.has_key ? 'on' : ''}">${g.has_key ? `${t('Klucz ustawiony')} · ${t('kończy się na …{hint}', { hint: esc(g.key_hint ?? '') })}` : t('Brak globalnego klucza')}</p>
+        <div class="field"><label for="adm-key">${t(g.has_key ? 'Nowy klucz (zostaw puste, żeby nie zmieniać)' : 'Klucz API')}</label><input type="password" id="adm-key" placeholder="sk-ant-…" autocapitalize="none" spellcheck="false"></div>
         <div class="field-row">
-          <div class="field"><label for="adm-model">Model</label><select id="adm-model">${options(MODEL_OPTIONS, g.model)}</select></div>
-          <div class="field"><label for="adm-effort">Dokładność</label><select id="adm-effort">${options(EFFORT_OPTIONS, g.effort)}</select></div>
+          <div class="field"><label for="adm-model">${t('Model')}</label><select id="adm-model">${options(MODEL_OPTIONS, g.model)}</select></div>
+          <div class="field"><label for="adm-effort">${t('Dokładność')}</label><select id="adm-effort">${options(EFFORT_OPTIONS, g.effort)}</select></div>
         </div>
         <div class="form-actions">
-          ${g.has_key ? '<button type="button" class="btn btn-danger" id="adm-key-remove">Usuń klucz</button>' : ''}
-          <button type="submit" class="btn btn-primary">Zapisz</button>
+          ${g.has_key ? `<button type="button" class="btn btn-danger" id="adm-key-remove">${t('Usuń klucz')}</button>` : ''}
+          <button type="submit" class="btn btn-primary">${t('Zapisz')}</button>
         </div>
       </form>
     </section>
     <section class="section">
-      <h2>Kody zaproszeń</h2>
+      <h2>${t('Kody zaproszeń')}</h2>
       <form class="card adm-new" id="adm-invite-form">
         <div class="field-row">
-          <div class="field"><label for="adm-note">Dla kogo (notatka)</label><input type="text" id="adm-note" maxlength="80" placeholder="np. Ola"></div>
-          <div class="field"><label for="adm-uses">Ile użyć</label><input type="number" id="adm-uses" min="1" max="100" value="1"></div>
+          <div class="field"><label for="adm-note">${t('Dla kogo (notatka)')}</label><input type="text" id="adm-note" maxlength="80" placeholder="${t('np. Ola')}"></div>
+          <div class="field"><label for="adm-uses">${t('Ile użyć')}</label><input type="number" id="adm-uses" min="1" max="100" value="1"></div>
         </div>
-        <button type="submit" class="btn btn-primary btn-block">Wygeneruj kod</button>
-        ${config_invite ? '<p class="hint" style="margin:10px 0 0">Dodatkowo działa stały kod z config.js (bez limitu użyć).</p>' : ''}
+        <button type="submit" class="btn btn-primary btn-block">${t('Wygeneruj kod')}</button>
+        ${config_invite ? `<p class="hint" style="margin:10px 0 0">${t('Dodatkowo działa stały kod z config.js (bez limitu użyć).')}</p>` : ''}
       </form>
-      <ul class="adm-list" id="adm-invites">${invites.length ? invites.map(inviteRow).join('') : '<li class="tl-empty">Brak kodów — wygeneruj pierwszy.</li>'}</ul>
+      <ul class="adm-list" id="adm-invites">${invites.length ? invites.map(inviteRow).join('') : `<li class="tl-empty">${t('Brak kodów — wygeneruj pierwszy.')}</li>`}</ul>
     </section>
     <section class="section">
-      <h2>Użytkownicy (${users.length})</h2>
+      <h2>${t('Użytkownicy ({n})', { n: users.length })}</h2>
       <ul class="adm-list" id="adm-users">${users.map(userRow).join('')}</ul>
     </section>
-    <button type="button" class="btn btn-block" id="adm-back">Wróć do konta</button>`;
+    <button type="button" class="btn btn-block" id="adm-back">${t('Wróć do konta')}</button>`;
 
   $('#adm-back').addEventListener('click', () => openAccount());
   $('#adm-global-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const keyEl = $('#adm-key');
     const key = keyEl.value.trim();
-    if (!validate([[keyEl, (v) => (v && !/^sk-ant-/.test(v) ? 'Klucz Anthropic zaczyna się od sk-ant-…' : null)]])) return;
+    if (!validate([[keyEl, (v) => (v && !/^sk-ant-/.test(v) ? t('Klucz Anthropic zaczyna się od sk-ant-…') : null)]])) return;
     const btn = e.target.querySelector('button[type="submit"]');
     btn.disabled = true;
-    btn.textContent = key ? 'Sprawdzam klucz…' : 'Zapisuję…';
+    btn.textContent = t(key ? 'Sprawdzam klucz…' : 'Zapisuję…');
     const payload = { model: $('#adm-model').value, effort: $('#adm-effort').value };
     if (key) payload.anthropic_key = key;
     try {
       const { global: ng } = await api('adminglobal', { json: payload });
-      toast(key ? 'Globalny klucz działa.' : 'Zapisano.');
+      toast(t(key ? 'Globalny klucz działa.' : 'Zapisano.'));
       renderAdmin({ ...ctx, global: ng });
       if (state.user?.key_source === 'global') refresh();
     } catch (err) {
-      if (key && /klucz/i.test(err.message)) fieldError(keyEl, err.message); else toast(err.message, 'error', 6000);
+      if (key && /klucz|key/i.test(err.message)) fieldError(keyEl, err.message); else toast(err.message, 'error', 6000);
       btn.disabled = false;
-      btn.textContent = 'Zapisz';
+      btn.textContent = t('Zapisz');
     }
   });
   $('#adm-key-remove')?.addEventListener('click', async () => {
-    if (!confirm('Usunąć globalny klucz? Użytkownicy, którym jest przypisany, stracą analizy AI.')) return;
+    if (!confirm(t('Usunąć globalny klucz? Użytkownicy, którym jest przypisany, stracą analizy AI.'))) return;
     try {
       const { global: ng } = await api('adminglobal', { json: { anthropic_key: null } });
-      toast('Globalny klucz usunięty.');
+      toast(t('Globalny klucz usunięty.'));
       renderAdmin({ ...ctx, global: ng });
     } catch (err) { toast(err.message, 'error'); }
   });
@@ -2196,7 +2214,7 @@ function renderAdmin({ users, invites, config_invite, global: g }) {
     e.preventDefault();
     try {
       const { invites: list, code } = await api('admininvite', { json: { action: 'create', note: $('#adm-note').value, max_uses: Number($('#adm-uses').value) } });
-      toast(`Kod: ${code}`);
+      toast(t('Kod: {code}', { code }));
       renderAdmin({ ...ctx, invites: list });
     } catch (err) { toast(err.message, 'error'); }
   });
@@ -2206,10 +2224,10 @@ function renderAdmin({ users, invites, config_invite, global: g }) {
     const code = btn.closest('.adm-row').dataset.code;
     const act = btn.dataset.act;
     if (act === 'copy') {
-      try { await navigator.clipboard.writeText(code); toast('Skopiowano kod.'); } catch { prompt('Kod zaproszenia:', code); }
+      try { await navigator.clipboard.writeText(code); toast(t('Skopiowano kod.')); } catch { prompt(t('Kod zaproszenia:'), code); }
       return;
     }
-    if (act === 'delete' && !confirm(`Usunąć kod ${code}?`)) return;
+    if (act === 'delete' && !confirm(t('Usunąć kod {code}?', { code }))) return;
     try {
       const { invites: list } = await api('admininvite', { json: { action: act, code } });
       renderAdmin({ ...ctx, invites: list });
@@ -2223,15 +2241,15 @@ function renderAdmin({ users, invites, config_invite, global: g }) {
     const login = row.querySelector('b').textContent;
     const act = btn.dataset.act;
     const payload = { id, action: act };
-    if (act === 'delete' && !confirm(`Usunąć konto „${login}” razem ze wszystkimi roślinami i historią? Tego nie da się cofnąć.`)) return;
+    if (act === 'delete' && !confirm(t('Usunąć konto „{login}” razem ze wszystkimi roślinami i historią? Tego nie da się cofnąć.', { login }))) return;
     if (act === 'password') {
-      const pw = prompt(`Nowe hasło dla „${login}” (min. 8 znaków). Użytkownik zostanie wylogowany ze wszystkich urządzeń.`);
+      const pw = prompt(t('Nowe hasło dla „{login}” (min. 8 znaków). Użytkownik zostanie wylogowany ze wszystkich urządzeń.', { login }));
       if (!pw) return;
       payload.password = pw;
     }
     try {
       const { users: list } = await api('adminuser', { json: payload });
-      toast(act === 'password' ? 'Hasło zmienione.' : act === 'delete' ? 'Konto usunięte.' : 'Zapisano.');
+      toast(t(act === 'password' ? 'Hasło zmienione.' : act === 'delete' ? 'Konto usunięte.' : 'Zapisano.'));
       renderAdmin({ ...ctx, users: list });
       if (login === me) refresh();
     } catch (err) { toast(err.message, 'error', 5000); }
@@ -2257,7 +2275,7 @@ function enhanceSelect(sel) {
   btn.setAttribute('aria-haspopup', 'listbox');
   btn.setAttribute('aria-expanded', 'false');
   if (sel.id) { btn.id = `${sel.id}-btn`; const lab = document.querySelector(`label[for="${sel.id}"]`); if (lab) lab.setAttribute('for', btn.id); }
-  const sync = () => { btn.innerHTML = `<span class="xsel-label">${esc(sel.options[sel.selectedIndex]?.text ?? '')}</span><span class="xsel-chev" aria-hidden="true"></span>`; };
+  const sync = () => { const o = sel.options[sel.selectedIndex]; btn.innerHTML = `<span class="xsel-label">${esc(o?.dataset.short ?? o?.text ?? '')}</span><span class="xsel-chev" aria-hidden="true"></span>`; };
   sync();
   sel.addEventListener('change', sync);
   sel.insertAdjacentElement('afterend', btn);
@@ -2343,6 +2361,7 @@ function closeSelect() {
 
 new MutationObserver(() => { for (const sel of el.sheetBody.querySelectorAll('select:not([data-enhanced])')) enhanceSelect(sel); })
   .observe(el.sheetBody, { childList: true, subtree: true });
+enhanceSelect(langSelect);
 
 // ---------------------------------------------------------------------------
 // easter egg: hover (or tap) the logo and the screen fills with falling leaves and flowers
@@ -2383,6 +2402,35 @@ function stopRain() {
   rain.timer = null;
   $('#brand').classList.remove('is-raining');
 }
+// Sprouts: a small leaf or flower grows out of the logo, drifts up and sideways, then falls for
+// 1–2 s while fading out. The hero logo on the Start tab sprouts often, the header logo rarely.
+const SPROUTS = ['🌸', '🌼', '🌷', '🍃', '🌿', '🌺', '🌱', '🍀'];
+function sprout(host, { size = 16 } = {}) {
+  if (reduceMotion.matches) return;
+  const el = document.createElement('span');
+  el.className = 'sprout';
+  el.textContent = SPROUTS[Math.floor(Math.random() * SPROUTS.length)];
+  const dir = Math.random() < 0.5 ? -1 : 1;
+  el.style.setProperty('--size', `${size}px`);
+  el.style.setProperty('--x0', `${(Math.random() * 40 - 20).toFixed(0)}%`);
+  el.style.setProperty('--dx', `${(dir * (18 + Math.random() * 26)).toFixed(0)}px`);
+  el.style.setProperty('--rise', `${(14 + Math.random() * 12).toFixed(0)}px`);
+  el.style.setProperty('--fall', `${(22 + Math.random() * 18).toFixed(0)}px`);
+  el.style.setProperty('--dur', `${(2.2 + Math.random() * 1.2).toFixed(2)}s`);
+  el.style.setProperty('--rot', `${(dir * (20 + Math.random() * 40)).toFixed(0)}deg`);
+  el.addEventListener('animationend', () => el.remove());
+  host.appendChild(el);
+}
+function sproutLoop(host, minMs, maxMs, opts) {
+  const tick = () => {
+    if (host.isConnected && !host.closest('[hidden]')) sprout(host, opts);
+    setTimeout(tick, minMs + Math.random() * (maxMs - minMs));
+  };
+  setTimeout(tick, minMs);
+}
+sproutLoop($('#brand-sprouts'), 8000, 15000, { size: 13 });
+sproutLoop($('#hero-logo'), 1600, 2800, { size: 18 });
+
 const brand = $('#brand');
 brand.addEventListener('mouseenter', () => startRain());
 brand.addEventListener('mouseleave', () => { rain.until = Date.now() + 600; });
@@ -2444,4 +2492,5 @@ document.addEventListener('visibilitychange', () => {
 
 window.addEventListener('hashchange', route);
 
+translateDom();
 if (state.token) enterApp(); else showLogin();

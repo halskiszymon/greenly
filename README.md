@@ -12,7 +12,7 @@ Multi-user: accounts with their own plants, push subscriptions and Claude key. R
 made in the admin panel (the first account, created from `config.js`, is the admin). After registering — and on every
 browser visit until the user agrees to use a plain tab — a modal explains how to add greenLy to the Home Screen.
 
-UI language: Polish. Code, comments and docs: English.
+UI languages: Polish and English (browser language, switchable). Code, comments and docs: English.
 
 ## Stack
 
@@ -103,10 +103,10 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 
 | method | action | body / notes |
 |---|---|---|
-| POST | `login` | `{login, password}` → `{token, user}`; scrypt verify, 400 ms delay on failure. `{password}` alone means `config.adminLogin` (old cached clients) |
+| POST | `login` | `{login, password, lang?}` → `{token, user}`; scrypt verify, 400 ms delay on failure. `{password}` alone means `config.adminLogin` (old cached clients) |
 | POST | `register` | `{login, password, invite}` → `{token, user}`; login `[a-z0-9][a-z0-9._-]{2,31}`, password ≥ 8; `invite` = a panel code with uses left or `config.inviteCode` |
 | POST | `logout` | drops the session |
-| POST | `account` | `{anthropic_key?, model?, effort?, password?, current_password?}` → `{user}`; a key is verified against Anthropic (`models.list`) before it is stored encrypted, `null` removes it; a password change logs out other devices. AI fields are rejected (400) for users on the global key |
+| POST | `account` | `{anthropic_key?, model?, effort?, password?, current_password?, lang?}` → `{user}`; a key is verified against Anthropic (`models.list`) before it is stored encrypted, `null` removes it; a password change logs out other devices. AI fields are rejected (400) for users on the global key |
 | GET | `admin` | admin only: `{users:[{id, login, is_admin, plants, subs, has_key, last_seen, invite_code}], invites:[…], config_invite}` |
 | POST | `adminuser` | admin only: `{id, action: delete\|password\|admin\|unadmin\|global\|unglobal, password?}`; deleting a user removes their plants and photos; the last admin cannot be demoted; `global` puts the user on the admin's key |
 | POST | `adminglobal` | admin only: `{anthropic_key?: string\|null, model?, effort?}` → `{global}`; the server-wide Claude key (verified, encrypted in `settings`) used by every user with `use_global_key` |
@@ -133,7 +133,7 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 ## Database (SQLite, `data/greenly.sqlite`)
 
 - `users` — id, login (unique), pass_hash (`scrypt$salt$hash`), anthropic_key (AES-256-GCM blob or NULL), anthropic_model,
-  anthropic_effort, is_admin, invite_code, created_at
+  anthropic_effort, is_admin, invite_code, use_global_key, lang, created_at
 - `sessions` — token (PK, 64 hex), user_id, created_at, last_seen (bumped hourly; rows idle for a year are pruned on start)
 - `invites` — code (PK), note, max_uses, uses, disabled, created_by, created_at
 - `settings` — key (PK), value: `global_anthropic_key` (encrypted), `global_model`, `global_effort`
@@ -165,6 +165,12 @@ The encryption secret is `config.secretKey` or, when empty, a random one written
   bring-your-own-key model, typical cost per analysis and what $5 buys, and jumps to the account screen, which has a
   step-by-step guide (Console → Settings → Billing → Buy credits, Settings → API keys → Create key) kept in sync
   with platform.claude.com/docs/en/get-api-key.
+- **Languages:** Polish and English. `public/i18n.js` holds `t()` and the English dictionary keyed by the Polish
+  source strings (missing keys fall back to Polish; `test/i18n.test.mjs` fails on any key without a translation).
+  The language comes from `localStorage` (`greenly.lang`), else from the browser (`pl*` → Polish, anything else →
+  English). A flag dropdown on the auth screens and a menu entry switch it (reload). The client sends `X-Lang` on
+  every request, so server error messages come back translated (`messages.js`), Claude answers in that language,
+  and the user's language is stored (`users.lang`) for the cron's push notifications.
 - **Menu:** a hamburger in the top bar opens a panel with the account, notifications toggle (with state), admin panel,
   install help, refresh and logout. The bottom sheet can be swiped down to dismiss (from the handle/header, or from
   the body when it is scrolled to the top). Tapping a plant or check-up photo opens a full-screen lightbox

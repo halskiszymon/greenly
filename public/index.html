@@ -12,121 +12,142 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./img/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./img/icon-192.png">
-  <link rel="stylesheet" href="./styles.css?v=13">
+  <link rel="stylesheet" href="./styles.css?v=14">
 </head>
 <body>
 
 <header class="topbar">
-  <a class="brand" href="#" id="brand" aria-label="greenLy — strona główna"><img class="brand-icon" src="./img/icon-192.png" alt="" width="30" height="30"><span>green<b>L</b>y</span></a>
+  <a class="brand" href="#" id="brand" aria-label="greenLy — strona główna" data-t-attr="aria-label"><span class="brand-icon-wrap" id="brand-sprouts"><img class="brand-icon" src="./img/icon-192.png" alt="" width="30" height="30"></span><span>green<b>L</b>y</span></a>
   <div class="topbar-actions" id="topbar-actions" hidden>
-    <button type="button" class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="menu">
+    <button type="button" class="menu-btn" id="menu-btn" aria-label="Menu" data-t-attr="aria-label" aria-expanded="false" aria-controls="menu">
       <span class="menu-bars" aria-hidden="true"><i></i><i></i><i></i></span>
     </button>
   </div>
 </header>
 
 <div class="menu-backdrop" id="menu-backdrop" hidden></div>
-<nav class="menu" id="menu" aria-label="Menu" hidden>
+<nav class="menu" id="menu" aria-label="Menu" data-t-attr="aria-label" hidden>
   <div class="menu-user">
     <span class="avatar" id="menu-avatar" aria-hidden="true">?</span>
-    <div class="menu-user-text"><b id="menu-login">…</b><span class="muted" id="menu-role">użytkownik</span></div>
+    <div class="menu-user-text"><b id="menu-login">…</b><span class="muted" id="menu-role" data-t="użytkownik">użytkownik</span></div>
   </div>
   <a class="menu-item" href="#" id="menu-home">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20c0-8 4-14 14-16-1 9-5 14-14 16z"/><path d="M4 20c3-5 6-8 10-11"/></svg>
-    <span class="mi-label">Rośliny</span>
+    <span class="mi-label" data-t="Rośliny">Rośliny</span>
   </a>
   <button type="button" class="menu-item" id="btn-push" aria-pressed="false">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
-    <span class="mi-label">Powiadomienia</span><span class="mi-state" id="push-state">wył.</span>
+    <span class="mi-label" data-t="Powiadomienia">Powiadomienia</span><span class="mi-state" id="push-state" data-t="wył.">wył.</span>
   </button>
   <button type="button" class="menu-item" id="btn-account">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
-    <span class="mi-label">Konto</span>
+    <span class="mi-label" data-t="Konto">Konto</span>
   </button>
   <button type="button" class="menu-item" id="btn-admin" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
-    <span class="mi-label">Panel administratora</span>
+    <span class="mi-label" data-t="Panel administratora">Panel administratora</span>
   </button>
   <div class="menu-sep" role="separator"></div>
   <button type="button" class="menu-item" id="btn-install">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M8 11l4 4 4-4"/><path d="M5 20h14"/></svg>
-    <span class="mi-label">Jak zainstalować</span>
+    <span class="mi-label" data-t="Jak zainstalować">Jak zainstalować</span>
   </button>
   <button type="button" class="menu-item" id="btn-refresh">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/></svg>
-    <span class="mi-label">Odśwież aplikację</span>
+    <span class="mi-label" data-t="Odśwież aplikację">Odśwież aplikację</span>
+  </button>
+  <button type="button" class="menu-item" id="btn-lang">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
+    <span class="mi-label" data-t="Język">Język</span><span class="mi-state" id="menu-lang-state">🇵🇱</span>
   </button>
   <button type="button" class="menu-item danger" id="btn-logout">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H5v16h5"/><path d="M14 8l4 4-4 4"/><path d="M9 12h9"/></svg>
-    <span class="mi-label">Wyloguj</span>
+    <span class="mi-label" data-t="Wyloguj">Wyloguj</span>
   </button>
 </nav>
 
 <main id="view-login" class="view" hidden>
   <div class="login">
-    <div class="auth-tabs" role="tablist" id="auth-tabs">
-      <button type="button" role="tab" class="auth-tab active" data-tab="start" aria-selected="true">Start</button>
-      <button type="button" role="tab" class="auth-tab" data-tab="login" aria-selected="false">Logowanie</button>
-      <button type="button" role="tab" class="auth-tab" data-tab="register" aria-selected="false">Rejestracja</button>
+    <div class="auth-top">
+      <div class="auth-tabs" role="tablist" id="auth-tabs">
+        <button type="button" role="tab" class="auth-tab active" data-tab="start" aria-selected="true" data-t="Start">Start</button>
+        <button type="button" role="tab" class="auth-tab" data-tab="login" aria-selected="false" data-t="Logowanie">Logowanie</button>
+        <button type="button" role="tab" class="auth-tab" data-tab="register" aria-selected="false" data-t="Rejestracja">Rejestracja</button>
+      </div>
+      <div class="lang-switch">
+        <select id="lang-select" aria-label="Język" data-t-attr="aria-label">
+          <option value="pl" data-short="🇵🇱">🇵🇱 Polski</option>
+          <option value="en" data-short="🇬🇧">🇬🇧 English</option>
+        </select>
+      </div>
     </div>
     <section id="start-panel" class="start">
       <div class="start-hero">
-        <img src="./img/icon-192.png" alt="" width="64" height="64">
+        <div class="hero-logo" id="hero-logo" aria-hidden="true">
+          <svg class="hero-svg" viewBox="0 0 512 512" width="72" height="72">
+            <rect width="512" height="512" rx="112" fill="#1c3326"/>
+            <g class="hero-drop" transform="translate(0,8)">
+              <path d="M232 78 C232 78 108 218 108 306 a124 124 0 0 0 248 0 C356 218 232 78 232 78 Z" fill="#2a9fae"/>
+              <path class="hero-glint" d="M168 300 a64 64 0 0 0 40 74" fill="none" stroke="#d7ecef" stroke-width="16" stroke-linecap="round" opacity=".85"/>
+            </g>
+            <g class="hero-leaf" transform="translate(0,8)">
+              <path d="M286 372 C286 268 356 206 452 200 C452 300 400 372 300 380 Z" fill="#8fd39f"/>
+              <path d="M300 372 C332 320 380 270 440 214" fill="none" stroke="#1c3326" stroke-width="12" stroke-linecap="round"/>
+            </g>
+          </svg>
+        </div>
         <h1>green<b>L</b>y</h1>
-        <p>Twoje rośliny doniczkowe, podlane na czas. Bez zgadywania.</p>
+        <p data-t="Twoje rośliny doniczkowe, podlane na czas. Bez zgadywania.">Twoje rośliny doniczkowe, podlane na czas. Bez zgadywania.</p>
       </div>
       <ul class="start-features">
-        <li><span class="ico" aria-hidden="true">📷</span><span><b>Zdjęcie zamiast atlasu.</b> Sfotografuj roślinę, a greenLy rozpozna gatunek i dobierze do niego plan podlewania.</span></li>
-        <li><span class="ico" aria-hidden="true">💧</span><span><b>Plan pod Twoje warunki.</b> Doniczka, światło, suche powietrze, pora roku: interwał i porcja wody liczą się z tego, gdzie roślina naprawdę stoi.</span></li>
-        <li><span class="ico" aria-hidden="true">🔔</span><span><b>Przypomnienia na telefon.</b> Powiadomienie w dniu podlania. Jeśli ziemia nadal mokra, jeden tap odkłada termin, a apka uczy się na tym.</span></li>
-        <li><span class="ico" aria-hidden="true">🩺</span><span><b>Kontrola i Doktor.</b> Zdjęcie do Claude: ocena stanu, diagnoza problemu z dopytaniem, profil pielęgnacji gatunku. Na Twoim kluczu, za centy.</span></li>
-        <li><span class="ico" aria-hidden="true">📖</span><span><b>Historia każdej rośliny.</b> Podlewania, przesadzenia, rozsadzanie, nawożenie, analizy: wszystko na jednej osi czasu.</span></li>
+        <li><span class="ico" aria-hidden="true">📷</span><span data-t-html="<b>Zdjęcie zamiast atlasu.</b> Sfotografuj roślinę, a greenLy rozpozna gatunek i dobierze do niego plan podlewania."><b>Zdjęcie zamiast atlasu.</b> Sfotografuj roślinę, a greenLy rozpozna gatunek i dobierze do niego plan podlewania.</span></li>
+        <li><span class="ico" aria-hidden="true">💧</span><span data-t-html="<b>Plan pod Twoje warunki.</b> Doniczka, światło, suche powietrze, pora roku: interwał i porcja wody liczą się z tego, gdzie roślina naprawdę stoi."><b>Plan pod Twoje warunki.</b> Doniczka, światło, suche powietrze, pora roku: interwał i porcja wody liczą się z tego, gdzie roślina naprawdę stoi.</span></li>
+        <li><span class="ico" aria-hidden="true">🔔</span><span data-t-html="<b>Przypomnienia na telefon.</b> Powiadomienie w dniu podlania. Jeśli ziemia nadal mokra, jeden tap odkłada termin, a apka uczy się na tym."><b>Przypomnienia na telefon.</b> Powiadomienie w dniu podlania. Jeśli ziemia nadal mokra, jeden tap odkłada termin, a apka uczy się na tym.</span></li>
+        <li><span class="ico" aria-hidden="true">🩺</span><span data-t-html="<b>Kontrola i Doktor.</b> Zdjęcie do Claude: ocena stanu, diagnoza problemu z dopytaniem, profil pielęgnacji gatunku. Na Twoim kluczu, za centy."><b>Kontrola i Doktor.</b> Zdjęcie do Claude: ocena stanu, diagnoza problemu z dopytaniem, profil pielęgnacji gatunku. Na Twoim kluczu, za centy.</span></li>
+        <li><span class="ico" aria-hidden="true">📖</span><span data-t-html="<b>Historia każdej rośliny.</b> Podlewania, przesadzenia, rozsadzanie, nawożenie, analizy: wszystko na jednej osi czasu."><b>Historia każdej rośliny.</b> Podlewania, przesadzenia, rozsadzanie, nawożenie, analizy: wszystko na jednej osi czasu.</span></li>
       </ul>
       <div class="start-actions">
-        <button type="button" class="btn btn-primary" id="start-register">Załóż konto</button>
-        <button type="button" class="btn" id="start-login">Mam już konto</button>
+        <button type="button" class="btn btn-primary" id="start-register" data-t="Załóż konto">Załóż konto</button>
+        <button type="button" class="btn" id="start-login" data-t="Mam już konto">Mam już konto</button>
       </div>
-      <p class="auth-hint">Aplikacja jest <b>bezpłatna</b>. Konta na zaproszenie. Zainstaluj greenLy na ekranie początkowym, żeby dostawać przypomnienia.</p>
+      <p class="auth-hint" data-t-html="Aplikacja jest <b>bezpłatna</b>. Konta na zaproszenie. Zainstaluj greenLy na ekranie początkowym, żeby dostawać przypomnienia.">Aplikacja jest <b>bezpłatna</b>. Konta na zaproszenie. Zainstaluj greenLy na ekranie początkowym, żeby dostawać przypomnienia.</p>
       <footer class="start-foot">
-        <p><span class="ico" aria-hidden="true">🌱</span><span>Właściciel tej instancji: <b>Szymon Halski</b> · <a href="mailto:greenly@freely.digital">greenly@freely.digital</a></span></p>
-        <p><span class="ico" aria-hidden="true">🐙</span><span>Open source: kod jest publiczny na <a href="https://github.com/halskiszymon/greenly" target="_blank" rel="noopener">github.com/halskiszymon/greenly</a>. Możesz postawić własną instancję.</span></p>
+        <p><span class="ico" aria-hidden="true">🌱</span><span data-t-html="Właściciel tej instancji: <b>Szymon Halski</b> · <a href=&quot;mailto:greenly@freely.digital&quot;>greenly@freely.digital</a>">Właściciel tej instancji: <b>Szymon Halski</b> · <a href="mailto:greenly@freely.digital">greenly@freely.digital</a></span></p>
+        <p><span class="ico" aria-hidden="true">🐙</span><span data-t-html="Open source: kod jest publiczny na <a href=&quot;https://github.com/halskiszymon/greenly&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>github.com/halskiszymon/greenly</a>. Możesz postawić własną instancję. Chcesz kontrybuować? Zrób po prostu PR i merguj.">Open source: kod jest publiczny na <a href="https://github.com/halskiszymon/greenly" target="_blank" rel="noopener">github.com/halskiszymon/greenly</a>. Możesz postawić własną instancję. Chcesz kontrybuować? Zrób po prostu PR i merguj.</span></p>
       </footer>
     </section>
     <form id="login-form" novalidate hidden>
-      <h1>Zaloguj się</h1>
-      <label for="login-user">Login</label>
+      <h1 data-t="Zaloguj się">Zaloguj się</h1>
+      <label for="login-user" data-t="Login">Login</label>
       <input id="login-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false">
-      <label for="login-password">Hasło</label>
+      <label for="login-password" data-t="Hasło">Hasło</label>
       <input id="login-password" type="password" name="password" autocomplete="current-password">
-      <button type="submit" class="btn btn-primary">Wejdź</button>
-      <button type="button" class="linklike auth-forgot" id="login-forgot" aria-expanded="false" aria-controls="forgot-panel">Nie pamiętasz hasła?</button>
+      <button type="submit" class="btn btn-primary" data-t="Wejdź">Wejdź</button>
+      <button type="button" class="linklike auth-forgot" id="login-forgot" aria-expanded="false" aria-controls="forgot-panel" data-t="Nie pamiętasz hasła?">Nie pamiętasz hasła?</button>
       <div class="forgot" id="forgot-panel" hidden>
-        <p>Hasła nie da się zresetować samemu. Napisz na <a href="mailto:greenly@freely.digital?subject=greenLy%20%E2%80%93%20reset%20has%C5%82a">greenly@freely.digital</a> albo bezpośrednio do Szymona: podaj swój login, a dostaniesz nowe hasło, które zmienisz w Koncie po zalogowaniu.</p>
+        <p data-t-html="Hasła nie da się zresetować samemu. Napisz na <a href=&quot;mailto:greenly@freely.digital?subject=greenLy%20%E2%80%93%20reset%20has%C5%82a&quot;>greenly@freely.digital</a> albo bezpośrednio do Szymona: podaj swój login, a dostaniesz nowe hasło, które zmienisz w Koncie po zalogowaniu.">Hasła nie da się zresetować samemu. Napisz na <a href="mailto:greenly@freely.digital?subject=greenLy%20%E2%80%93%20reset%20has%C5%82a">greenly@freely.digital</a> albo bezpośrednio do Szymona: podaj swój login, a dostaniesz nowe hasło, które zmienisz w Koncie po zalogowaniu.</p>
       </div>
     </form>
     <form id="register-form" novalidate hidden>
-      <h1>Załóż konto</h1>
-      <label for="reg-user">Login</label>
+      <h1 data-t="Załóż konto">Załóż konto</h1>
+      <label for="reg-user" data-t="Login">Login</label>
       <input id="reg-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32">
-      <label for="reg-password">Hasło</label>
+      <label for="reg-password" data-t="Hasło">Hasło</label>
       <input id="reg-password" type="password" name="password" autocomplete="new-password">
-      <label for="reg-invite">Kod zaproszenia</label>
+      <label for="reg-invite" data-t="Kod zaproszenia">Kod zaproszenia</label>
       <input id="reg-invite" type="text" name="invite" autocomplete="off" autocapitalize="none" spellcheck="false">
-      <button type="submit" class="btn btn-primary">Załóż konto</button>
-      <p class="auth-hint">Każde konto ma własne rośliny i własny klucz Claude do analiz. Kod zaproszenia dostaniesz od osoby, która prowadzi tę instancję.</p>
+      <button type="submit" class="btn btn-primary" data-t="Załóż konto">Załóż konto</button>
+      <p class="auth-hint" data-t="Każde konto ma własne rośliny i własny klucz Claude do analiz. Kod zaproszenia dostaniesz od osoby, która prowadzi tę instancję.">Każde konto ma własne rośliny i własny klucz Claude do analiz. Kod zaproszenia dostaniesz od osoby, która prowadzi tę instancję.</p>
     </form>
   </div>
 </main>
 
 <main id="view-app" class="view" hidden>
-  <p class="ios-hint" id="ios-hint" hidden>
-    Na iPhonie powiadomienia działają dopiero po dodaniu greenLy do ekranu początkowego
-    (Udostępnij → „Do ekranu początkowego”). Zgodę na powiadomienia kliknij w wersji uruchomionej z ikony.
-  </p>
+  <p class="ios-hint" id="ios-hint" hidden data-t="Na iPhonie powiadomienia działają dopiero po dodaniu greenLy do ekranu początkowego (Udostępnij → „Do ekranu początkowego”). Zgodę na powiadomienia kliknij w wersji uruchomionej z ikony.">Na iPhonie powiadomienia działają dopiero po dodaniu greenLy do ekranu początkowego (Udostępnij → „Do ekranu początkowego”). Zgodę na powiadomienia kliknij w wersji uruchomionej z ikony.</p>
   <ul class="plants" id="plants" aria-live="polite"></ul>
-  <p class="empty" id="empty" hidden>Nie masz jeszcze roślin. Dodaj pierwszą ze zdjęcia.</p>
+  <p class="empty" id="empty" hidden data-t="Nie masz jeszcze roślin. Dodaj pierwszą ze zdjęcia.">Nie masz jeszcze roślin. Dodaj pierwszą ze zdjęcia.</p>
   <div class="fab-wrap">
-    <button type="button" class="btn btn-primary fab" id="btn-add">+ Dodaj roślinę</button>
+    <button type="button" class="btn btn-primary fab" id="btn-add" data-t="+ Dodaj roślinę">+ Dodaj roślinę</button>
   </div>
 </main>
 
@@ -136,9 +157,9 @@
 <section class="modal" id="update-modal" role="alertdialog" aria-modal="true" aria-labelledby="update-title" hidden>
   <div class="modal-body update-body">
     <span class="update-ico" aria-hidden="true">🌱</span>
-    <h2 id="update-title">Jest nowa wersja greenLy</h2>
-    <p class="muted">Odśwież, żeby korzystać z aktualnej wersji. Zajmie to sekundę, nic nie stracisz.</p>
-    <button type="button" class="btn btn-primary btn-block" id="update-reload">Odśwież teraz</button>
+    <h2 id="update-title" data-t="Jest nowa wersja greenLy">Jest nowa wersja greenLy</h2>
+    <p class="muted" data-t="Odśwież, żeby korzystać z aktualnej wersji. Zajmie to sekundę, nic nie stracisz.">Odśwież, żeby korzystać z aktualnej wersji. Zajmie to sekundę, nic nie stracisz.</p>
+    <button type="button" class="btn btn-primary btn-block" id="update-reload" data-t="Odśwież teraz">Odśwież teraz</button>
   </div>
 </section>
 
@@ -148,8 +169,8 @@
 </section>
 
 <div class="lightbox" id="lightbox" hidden>
-  <img id="lightbox-img" alt="Zdjęcie rośliny">
-  <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Zamknij">✕</button>
+  <img id="lightbox-img" alt="Zdjęcie rośliny" data-t-attr="alt">
+  <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Zamknij" data-t-attr="aria-label">✕</button>
 </div>
 
 <div class="modal-backdrop" id="install-backdrop" hidden></div>
@@ -162,7 +183,7 @@
   <div class="sheet-handle" aria-hidden="true"></div>
   <div class="sheet-head">
     <h2 id="sheet-title">Nowa roślina</h2>
-    <button type="button" class="btn btn-ghost" id="sheet-close" aria-label="Zamknij">✕</button>
+    <button type="button" class="btn btn-ghost" id="sheet-close" aria-label="Zamknij" data-t-attr="aria-label">✕</button>
   </div>
   <div class="sheet-body" id="sheet-body"></div>
 </section>
@@ -183,12 +204,12 @@
       </span>
     </button>
     <span class="plant-btns">
-      <button type="button" class="btn btn-water">Podlej</button>
-      <button type="button" class="btn btn-wet" hidden>Nadal mokro</button>
+      <button type="button" class="btn btn-water" data-t="Podlej">Podlej</button>
+      <button type="button" class="btn btn-wet" hidden data-t="Nadal mokro">Nadal mokro</button>
     </span>
   </li>
 </template>
 
-<script src="./app.js?v=13" type="module"></script>
+<script src="./app.js?v=14" type="module"></script>
 </body>
 </html>

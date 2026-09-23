@@ -254,6 +254,7 @@ export function openDb(file = DB_FILE) {
   ensureColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'invite_code', 'TEXT');
   ensureColumn(db, 'users', 'use_global_key', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'users', 'lang', 'TEXT'); // 'pl' | 'en' — push notification language
   ensureColumn(db, 'plants', 'snoozed_until', 'TEXT'); // "still wet": reminder pushed to this date
   ensureColumn(db, 'plants', 'photo_full', 'TEXT');    // large photo for the lightbox; `photo` stays the thumbnail
   ensureColumn(db, 'plants', 'ml_adjust', 'REAL NOT NULL DEFAULT 1');       // learned: portion multiplier 0.5–1
@@ -690,6 +691,10 @@ export function createUser(db, { login, password, anthropic_key = null, anthropi
     INSERT INTO users (login, pass_hash, anthropic_key, anthropic_model, anthropic_effort, is_admin, invite_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(login, hashPassword(password), anthropic_key, anthropic_model, anthropic_effort, is_admin ? 1 : 0, invite_code, new Date().toISOString());
   return Number(r.lastInsertRowid);
+}
+
+export function setUserLang(db, id, lang) {
+  db.prepare('UPDATE users SET lang = ? WHERE id = ?').run(lang, id);
 }
 
 export function setUseGlobalKey(db, id, on) {
