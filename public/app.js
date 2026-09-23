@@ -3,7 +3,7 @@
 // Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
 // (test/version.test.mjs checks they match). The server reads this constant from the file and
 // the running app compares it with /api/version to offer a reload after a deploy.
-export const APP_VERSION = '11';
+export const APP_VERSION = '12';
 
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';

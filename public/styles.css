@@ -620,3 +620,8 @@ input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; b
 .forgot p { margin: 0; }
 .forgot a { color: var(--water-ink); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .start, .start-features li, .forgot { animation: none; } }
+
+.start-foot { margin: 2px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.start-foot p { margin: 0; display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; }
+.start-foot .ico { flex-shrink: 0; }
+.start-foot a { color: var(--water-ink); font-weight: 600; overflow-wrap: anywhere; }
