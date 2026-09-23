@@ -154,6 +154,10 @@ The encryption secret is `config.secretKey` or, when empty, a random one written
 - **Install prompt:** outside standalone mode the app shows a modal with platform-specific steps (iOS share sheet,
   Android/desktop `beforeinstallprompt` button or menu) after registration and on every visit until the user ticks
   "I know I won't get reminders" and chooses to stay in the browser (`localStorage` `greenly.webok`). "Konto → Jak zainstalować" reopens it.
+- **No key yet:** the AI buttons stay enabled; without a usable key they open a popup that explains the
+  bring-your-own-key model, typical cost per analysis and what $5 buys, and jumps to the account screen, which has a
+  step-by-step guide (Console → Settings → Billing → Buy credits, Settings → API keys → Create key) kept in sync
+  with platform.claude.com/docs/en/get-api-key.
 - **Menu:** a hamburger in the top bar opens a panel with the account, notifications toggle (with state), admin panel,
   install help, refresh and logout. The bottom sheet can be swiped down to dismiss (from the handle/header, or from
   the body when it is scrolled to the top). Tapping a plant or check-up photo opens a full-screen lightbox

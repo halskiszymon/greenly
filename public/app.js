@@ -1095,8 +1095,8 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
       <button type="button" class="btn btn-wet" id="pv-wet" ${isDue(p) ? '' : 'hidden'}>Nadal mokro</button>
     </p>
     <div class="pv-actions">
-      <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Kontrola</button>
-      <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Doktor</button>
+      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-checkup">Kontrola</button>
+      <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-doctor">Doktor</button>
       <button type="button" class="btn" id="pv-edit">Edytuj</button>
     </div>
     <div class="pv-actions two">
@@ -1128,8 +1128,8 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
 
     <section class="section" id="pv-profile">
       <h2>Profil gatunku</h2>
-      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.${state.ai ? '' : ' Żeby z tego korzystać, dodaj swój klucz Anthropic w <b>Konto</b>.'}</p>
-        <button type="button" class="btn btn-soft" id="pv-gen-profile" ${state.ai ? '' : 'disabled'}>Opisz gatunek</button></div>`}
+      ${p.profile ? renderProfile(p.profile) : `<div class="card"><p class="muted" style="margin:0 0 10px">Szczegółowy opis gatunku napisany przez AI: pochodzenie, światło, podlewanie, nawożenie, przesadzanie, toksyczność dla zwierząt, typowe problemy.</p>
+        <button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-gen-profile">Opisz gatunek</button></div>`}
     </section>
 
     <section class="section">
@@ -1185,10 +1185,10 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
     });
   }
   $('#pv-edit').addEventListener('click', () => openEdit(p.id));
-  $('#pv-checkup').addEventListener('click', () => openCheck(p, 'checkup'));
-  $('#pv-doctor').addEventListener('click', () => openCheck(p, 'doctor'));
-  $('#pv-gen-profile')?.addEventListener('click', (e) => generateProfile(p.id, e.target));
-  $('#pv-refresh-profile')?.addEventListener('click', (e) => generateProfile(p.id, e.target, true));
+  $('#pv-checkup').addEventListener('click', () => withAi(() => openCheck(p, 'checkup')));
+  $('#pv-doctor').addEventListener('click', () => withAi(() => openCheck(p, 'doctor')));
+  $('#pv-gen-profile')?.addEventListener('click', (e) => withAi(() => generateProfile(p.id, e.target)));
+  $('#pv-refresh-profile')?.addEventListener('click', (e) => withAi(() => generateProfile(p.id, e.target, true)));
 
   for (const head of el.plantView.querySelectorAll('.check-head')) {
     head.addEventListener('click', () => {
@@ -1293,7 +1293,7 @@ function renderProfile(pr) {
     ${row('Temperatura', pr.temperature)}${row('Podłoże i doniczka', pr.soil_and_pot)}${row('Nawożenie', pr.fertilizing)}
     ${row('Przesadzanie', pr.repotting)}${row('Zwierzęta', pr.pets)}${row('Gdzie postawić', pr.placement)}
     ${pr.common_problems?.length ? `<p><b>Typowe problemy:</b></p><ul>${pr.common_problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
-    <div class="inline-actions"><button type="button" class="btn btn-soft" id="pv-refresh-profile" ${state.ai ? '' : 'disabled'}>Napisz od nowa</button></div>
+    <div class="inline-actions"><button type="button" class="btn btn-soft ${state.ai ? '' : 'needs-key'}" id="pv-refresh-profile">Napisz od nowa</button></div>
   </div>`;
 }
 
@@ -1309,8 +1309,8 @@ async function generateProfile(id, btn, refresh = false) {
   } catch (err) {
     think.fail();
     card.innerHTML = saved;
-    $('#pv-gen-profile')?.addEventListener('click', (e) => generateProfile(id, e.target));
-    $('#pv-refresh-profile')?.addEventListener('click', (e) => generateProfile(id, e.target, true));
+    $('#pv-gen-profile')?.addEventListener('click', (e) => withAi(() => generateProfile(id, e.target)));
+    $('#pv-refresh-profile')?.addEventListener('click', (e) => withAi(() => generateProfile(id, e.target, true)));
     toast(err.message, 'error', 6000);
   }
 }
@@ -1406,10 +1406,32 @@ async function submitFollowUp(e, plantId) {
 // paced by an estimate learned from previous runs, elapsed/expected time
 // ---------------------------------------------------------------------------
 const THINK_TEXTS = {
-  checkup: ['Oglądam zdjęcia', 'Sprawdzam liście i ich kolor', 'Porównuję z warunkami, w jakich stoi', 'Sprawdzam rytm podlewania i porę roku', 'Układam zalecenia', 'Jeszcze chwila, dopinam szczegóły'],
-  doctor: ['Oglądam zdjęcia', 'Szukam objawów', 'Zestawiam z Twoim opisem', 'Ważę możliwe przyczyny', 'Sprawdzam, czego brakuje do diagnozy', 'Układam plan działania'],
-  followup: ['Czytam odpowiedzi', 'Wracam do zdjęć', 'Aktualizuję diagnozę', 'Sprawdzam, co jeszcze wykluczyć'],
-  profile: ['Przypominam sobie gatunek', 'Sprawdzam wymagania świetlne', 'Dobieram rytm podlewania do polskiego mieszkania', 'Spisuję typowe problemy', 'Redaguję opis'],
+  checkup: [
+    'Oglądam zdjęcia', 'Sprawdzam liście i ich kolor', 'Patrzę na końcówki i brzegi liści', 'Szukam plam, przebarwień i śladów szkodników',
+    'Oceniam turgor — czy liście są jędrne', 'Porównuję z warunkami, w jakich stoi', 'Sprawdzam, czy światło pasuje do gatunku',
+    'Zerkam na doniczkę i podłoże', 'Sprawdzam rytm podlewania i porę roku', 'Liczę, ile dni minęło od podlania',
+    'Zestawiam z tym, co lubi ten gatunek', 'Przeglądam ostatnie zdarzenia w historii', 'Zastanawiam się nad nawożeniem',
+    'Sprawdzam, czy nie czas na przesadzenie', 'Oceniam wilgotność powietrza wokół rośliny', 'Układam zalecenia od najważniejszego',
+    'Dobieram wskazówki do Twojego mieszkania', 'Sprawdzam, czy niczego nie przeoczyłem', 'Redaguję ocenę', 'Jeszcze chwila, dopinam szczegóły',
+  ],
+  doctor: [
+    'Oglądam zdjęcia', 'Czytam Twój opis', 'Szukam objawów na liściach', 'Sprawdzam spód liści i łodygi', 'Przyglądam się podłożu',
+    'Zestawiam objawy z Twoim opisem', 'Ważę możliwe przyczyny', 'Sprawdzam, czy to przelanie', 'Sprawdzam, czy to przesuszenie',
+    'Rozważam szkodniki', 'Rozważam grzyby i bakterie', 'Sprawdzam, czy winne jest światło', 'Sprawdzam, czy winne jest suche powietrze',
+    'Porównuję z historią podlewania', 'Szeregują hipotezy od najbardziej prawdopodobnej', 'Zastanawiam się, co sprawdzić palcem w doniczce',
+    'Sprawdzam, czego brakuje do diagnozy', 'Układam pytania, jeśli są potrzebne', 'Układam plan działania', 'Wybieram, co zrobić od razu', 'Redaguję diagnozę',
+  ],
+  followup: [
+    'Czytam odpowiedzi', 'Wracam do zdjęć', 'Zestawiam odpowiedzi z objawami', 'Wykluczam, co się nie zgadza', 'Sprawdzam, która hipoteza została',
+    'Aktualizuję diagnozę', 'Sprawdzam, co jeszcze wykluczyć', 'Przeliczam ryzyko przelania', 'Sprawdzam, czy pasuje do gatunku',
+    'Weryfikuję plan działania', 'Zastanawiam się, czy potrzebne są kolejne pytania', 'Doprecyzowuję zalecenia', 'Redaguję odpowiedź',
+  ],
+  profile: [
+    'Przypominam sobie gatunek', 'Sprawdzam, skąd pochodzi', 'Sprawdzam wymagania świetlne', 'Dobieram rytm podlewania do polskiego mieszkania',
+    'Myślę o zimie z grzejnikiem pod parapetem', 'Sprawdzam wilgotność, jaką lubi', 'Sprawdzam zakres temperatur', 'Dobieram podłoże i doniczkę',
+    'Ustalam, jak i kiedy nawozić', 'Ustalam, kiedy przesadzać', 'Sprawdzam, czy jest bezpieczna dla kotów i psów', 'Spisuję typowe problemy',
+    'Zestawiam z warunkami, w których stoi', 'Szukam, gdzie najlepiej ją postawić', 'Skracam do konkretów', 'Redaguję opis',
+  ],
 };
 const THINK_DEFAULT = { checkup: 45, doctor: 45, followup: 35, profile: 30 };
 
@@ -1432,7 +1454,11 @@ function thinkRecord(kind, secs) {
 /** Renders the panel into `host` and returns {finish, fail}. */
 function startThinking(host, kind) {
   const est = thinkEstimate(kind);
-  const texts = THINK_TEXTS[kind] ?? THINK_TEXTS.checkup;
+  const pool = THINK_TEXTS[kind] ?? THINK_TEXTS.checkup;
+  // First three in order (they read as a sequence), the rest shuffled so every wait looks different.
+  const tail = pool.slice(3);
+  for (let j = tail.length - 1; j > 0; j--) { const k = Math.floor(Math.random() * (j + 1)); [tail[j], tail[k]] = [tail[k], tail[j]]; }
+  const texts = [...pool.slice(0, 3), ...tail];
   host.innerHTML = `<div class="thinking" role="status" aria-live="polite">
     <span class="think-leaf" aria-hidden="true">🌿</span>
     <p class="think-text"><span class="t">${esc(texts[0])}</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
@@ -1838,12 +1864,77 @@ function closeInstall() {
 }
 
 // ---------------------------------------------------------------------------
+// "no Claude key yet" popup — shown instead of running an AI feature
+// ---------------------------------------------------------------------------
+// Rough per-analysis cost from the README measurements (2–3k input + 1–3k output tokens, photo included):
+// Opus 5 ($5/$25 per MTok) ≈ $0.03–0.08, Sonnet 5 ($2/$10) ≈ $0.02–0.03. $5 therefore covers ~60–150 / ~200 analyses.
+function openNoKey() {
+  const u = state.user ?? {};
+  const globalMissing = u.key_source === 'global' && !u.has_key;
+  $('#nokey-body').innerHTML = globalMissing ? `
+    <span class="modal-ico" aria-hidden="true">🔑</span>
+    <h2 id="nokey-title">Jeszcze chwila</h2>
+    <p class="muted">Administrator przypisał Ci wspólny klucz Claude, ale jeszcze go nie ustawił. Gdy to zrobi, Kontrola, Doktor i opisy gatunków zaczną działać same — nic nie musisz robić.</p>
+    <button type="button" class="btn btn-primary btn-block" id="nokey-close">Rozumiem</button>`
+  : `
+    <span class="modal-ico" aria-hidden="true">🌿</span>
+    <h2 id="nokey-title">Siemano! Tu potrzebny jest Twój klucz Claude</h2>
+    <p class="muted">Kontrola, Doktor i opisy gatunków to analizy robione przez Claude (AI od Anthropic). Żeby z nich korzystać, podepnij w ustawieniach konta <b>własny klucz API</b>. Rozliczasz się bezpośrednio z Anthropic, greenLy nic nie dolicza.</p>
+    <ul class="nokey-facts">
+      <li><span class="ico" aria-hidden="true">💸</span><span>Płacisz z góry doładowanymi kredytami, bez abonamentu. Jedna analiza ze zdjęciem to zwykle <b>3–8 centów</b> na Claude Opus 5 albo <b>2–3 centy</b> na Sonnet 5.</span></li>
+      <li><span class="ico" aria-hidden="true">🧮</span><span><b>5 $</b> wystarcza mniej więcej na <b>60–150 analiz</b> na Opus 5 albo <b>około 200</b> na Sonnet 5. Nowe konto Anthropic dostaje też małą pulę darmowych kredytów na start.</span></li>
+      <li><span class="ico" aria-hidden="true">🔒</span><span>Klucz jest szyfrowany na serwerze i nigdy nie wraca do przeglądarki. W Koncie masz instrukcję krok po kroku, jak go założyć.</span></li>
+    </ul>
+    <button type="button" class="btn btn-primary btn-block" id="nokey-go">Podłącz klucz w Koncie</button>
+    <button type="button" class="btn btn-block" id="nokey-close" style="margin-top:8px">Może później</button>`;
+  $('#nokey-backdrop').hidden = false;
+  $('#nokey-modal').hidden = false;
+  void $('#nokey-modal').offsetHeight;
+  $('#nokey-backdrop').classList.add('open');
+  $('#nokey-modal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  $('#nokey-close').addEventListener('click', closeNoKey);
+  $('#nokey-go')?.addEventListener('click', () => { closeNoKey(); openAccount({ focusKey: true }); });
+}
+function closeNoKey() {
+  const m = $('#nokey-modal');
+  if (m.hidden) return;
+  $('#nokey-backdrop').classList.remove('open');
+  m.classList.remove('open');
+  document.body.style.overflow = el.sheet.hidden ? '' : 'hidden';
+  const finish = () => { m.hidden = true; $('#nokey-backdrop').hidden = true; };
+  if (reduceMotion.matches) finish(); else setTimeout(finish, 240);
+}
+$('#nokey-backdrop').addEventListener('click', closeNoKey);
+
+/** Runs `fn` when the user has a working key; otherwise shows the popup. */
+function withAi(fn) {
+  if (state.ai) return fn();
+  openNoKey();
+}
+
+// Step-by-step, from platform.claude.com/docs/en/get-api-key and the Console billing help — keep in sync with them.
+const KEY_HOWTO = `
+  <details class="howto">
+    <summary>Jak założyć klucz Claude — krok po kroku</summary>
+    <ol>
+      <li>Wejdź na <a href="https://platform.claude.com/" target="_blank" rel="noopener">platform.claude.com</a> (Claude Console) i zaloguj się albo załóż konto — mail lub konto Google.</li>
+      <li>Doładuj kredyty: <b>Settings → Billing → Buy credits</b>, wpisz kwotę (np. 5 $) i zapłać kartą. Bez kredytów API nie odpowiada; nowe konto ma małą darmową pulę na start. Kredyty są ważne rok. W sekcji <b>Auto-reload</b> możesz włączyć automatyczne doładowanie.</li>
+      <li>Otwórz <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Settings → API keys</a> i kliknij <b>Create key</b>.</li>
+      <li>Nadaj nazwę (np. <i>greenLy</i>), wybierz ważność (<i>expiration</i>) i zostaw <b>Linked account</b> ustawione na siebie. Zatwierdź.</li>
+      <li>Skopiuj klucz — zaczyna się od <code>sk-ant-</code> i Console pokaże go <b>tylko raz</b>. Jeśli go zgubisz, po prostu utwórz nowy.</li>
+      <li>Wklej go tutaj i kliknij <b>Zapisz</b>. greenLy sprawdzi klucz w Anthropic zanim go zapisze.</li>
+    </ol>
+    <p class="hint" style="margin:8px 0 0">Koszty: Opus 5 to 5 $ za milion tokenów wejścia i 25 $ za milion wyjścia, Sonnet 5 odpowiednio 2 $ i 10 $. Jedna analiza ze zdjęciem to 3–8 centów (Opus) albo 2–3 centy (Sonnet); opis gatunku jest tańszy. Zużycie widać w Console w zakładce <b>Usage</b>, a przybliżony koszt każdej analizy pod jej wynikiem w greenLy.</p>
+  </details>`;
+
+// ---------------------------------------------------------------------------
 // account sheet: Anthropic key + model, password, install help, logout
 // ---------------------------------------------------------------------------
 const MODEL_OPTIONS = [['claude-opus-5', 'Claude Opus 5 — najdokładniejszy'], ['claude-sonnet-5', 'Claude Sonnet 5 — tańszy']];
 const EFFORT_OPTIONS = [['low', 'niski — szybko i tanio'], ['medium', 'średni — domyślny'], ['high', 'wysoki — wnikliwie, drożej']];
 
-function openAccount() {
+function openAccount({ focusKey = false } = {}) {
   const u = state.user ?? { login: '…', has_key: false, model: 'claude-opus-5', effort: 'medium' };
   const options = (list, sel) => list.map(([k, l]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(l)}</option>`).join('');
   openSheet('Konto');
@@ -1872,7 +1963,7 @@ function openAccount() {
             <button type="submit" class="btn btn-primary">Zapisz</button>
           </div>
         </form>
-        <p class="hint" style="margin:10px 0 0">Klucz wygenerujesz na <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (API keys → Create key). Płacisz z góry doładowanymi środkami, bez abonamentu.</p>
+        ${KEY_HOWTO}
       </div>`}
     </section>
 
@@ -1902,6 +1993,10 @@ function openAccount() {
 
     <button type="button" class="btn btn-danger btn-block" id="acc-logout">Wyloguj</button>`;
   $('#acc-admin')?.addEventListener('click', () => openAdmin());
+  if (focusKey && $('#acc-key')) {
+    $('.howto', el.sheetBody).open = true;
+    setTimeout(() => $('#acc-key').focus({ preventScroll: false }), reduceMotion.matches ? 0 : 380);
+  }
 
   $('#key-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();

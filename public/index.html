@@ -17,7 +17,7 @@
 <body>
 
 <header class="topbar">
-  <a class="brand" href="./" aria-label="greenLy — strona główna">green<b>L</b>y</a>
+  <a class="brand" href="./" aria-label="greenLy — strona główna"><img class="brand-icon" src="./img/icon-192.png" alt="" width="30" height="30"><span>green<b>L</b>y</span></a>
   <div class="topbar-actions" id="topbar-actions" hidden>
     <button type="button" class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="menu">
       <span class="menu-bars" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -112,6 +112,11 @@
     <p class="muted">Odśwież, żeby korzystać z aktualnej wersji. Zajmie to sekundę, nic nie stracisz.</p>
     <button type="button" class="btn btn-primary btn-block" id="update-reload">Odśwież teraz</button>
   </div>
+</section>
+
+<div class="modal-backdrop" id="nokey-backdrop" hidden></div>
+<section class="modal" id="nokey-modal" role="dialog" aria-modal="true" aria-labelledby="nokey-title" hidden>
+  <div class="modal-body" id="nokey-body"></div>
 </section>
 
 <div class="lightbox" id="lightbox" hidden>
