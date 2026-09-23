@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openDb, loadCare, insertPlant, insertCheck, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings, insertEvent, listEvents, getEvent, deleteEvent, EVENT_TYPES } from '../lib.js';
+import { openDb, loadCare, insertPlant, insertCheck, snoozePlant, wateringMl, decoratePlant, getPlant, getCheck, listChecks, checkChain, deletePlant, setProfile, listPlants, ensureColumn, waterPlant, deleteWatering, ensureWateringRow, listWaterings, backfillWaterings, insertEvent, listEvents, getEvent, deleteEvent, EVENT_TYPES } from '../lib.js';
 
 loadCare();
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'greenly-db-')), 'test.sqlite');
@@ -86,4 +86,26 @@ test('events: insert, list newest first, parsed data, delete, cascade with the p
   assert.equal(deleteEvent(db, e2), null);
   deletePlant(db, id);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM events').get().n, 0);
+});
+
+test('still wet: snooze pushes next_due, watering clears it; water_ml scales with the pot and group', () => {
+  const db = openDb(tmp());
+  const now = new Date(2026, 8, 23);
+  const id = insertPlant(db, { ...basePlant, last_watered: '2026-08-20' });
+  const before = decoratePlant(getPlant(db, id), now);
+  assert.ok(before.days_left < 0);
+  assert.equal(before.snoozed, false);
+  assert.equal(snoozePlant(db, id, 2, now), '2026-09-25'); // overdue → counts from today
+  const after = decoratePlant(getPlant(db, id), now);
+  assert.equal(after.next_due, '2026-09-25');
+  assert.equal(after.days_left, 2);
+  assert.equal(after.snoozed, true);
+  waterPlant(db, id, '2026-09-23');
+  assert.equal(decoratePlant(getPlant(db, id), now).snoozed, false);
+  // not yet due → counts from the due date
+  const due = decoratePlant(getPlant(db, id), now).next_due;
+  assert.equal(snoozePlant(db, id, 1, now) > due, true);
+  assert.equal(wateringMl({ pot_cm: 15, group_key: 'aroid' }), 290);
+  assert.ok(wateringMl({ pot_cm: 15, group_key: 'cactus' }) < wateringMl({ pot_cm: 15, group_key: 'fern' }));
+  assert.ok(wateringMl({ pot_cm: 30, group_key: 'universal' }) > wateringMl({ pot_cm: 15, group_key: 'universal' }));
 });

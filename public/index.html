@@ -19,10 +19,48 @@
 <header class="topbar">
   <a class="brand" href="./" aria-label="greenLy — strona główna">green<b>L</b>y</a>
   <div class="topbar-actions" id="topbar-actions" hidden>
-    <button type="button" class="btn btn-ghost" id="btn-push" aria-pressed="false">Powiadomienia</button>
-    <button type="button" class="btn btn-ghost" id="btn-account">Konto</button>
+    <button type="button" class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false" aria-controls="menu">
+      <span class="menu-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+    </button>
   </div>
 </header>
+
+<div class="menu-backdrop" id="menu-backdrop" hidden></div>
+<nav class="menu" id="menu" aria-label="Menu" hidden>
+  <div class="menu-user">
+    <span class="avatar" id="menu-avatar" aria-hidden="true">?</span>
+    <div class="menu-user-text"><b id="menu-login">…</b><span class="muted" id="menu-role">użytkownik</span></div>
+  </div>
+  <a class="menu-item" href="#" id="menu-home">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20c0-8 4-14 14-16-1 9-5 14-14 16z"/><path d="M4 20c3-5 6-8 10-11"/></svg>
+    <span class="mi-label">Rośliny</span>
+  </a>
+  <button type="button" class="menu-item" id="btn-push" aria-pressed="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>
+    <span class="mi-label">Powiadomienia</span><span class="mi-state" id="push-state">wył.</span>
+  </button>
+  <button type="button" class="menu-item" id="btn-account">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+    <span class="mi-label">Konto</span>
+  </button>
+  <button type="button" class="menu-item" id="btn-admin" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
+    <span class="mi-label">Panel administratora</span>
+  </button>
+  <div class="menu-sep" role="separator"></div>
+  <button type="button" class="menu-item" id="btn-install">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="M8 11l4 4 4-4"/><path d="M5 20h14"/></svg>
+    <span class="mi-label">Jak zainstalować</span>
+  </button>
+  <button type="button" class="menu-item" id="btn-refresh">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v5h-5"/></svg>
+    <span class="mi-label">Odśwież aplikację</span>
+  </button>
+  <button type="button" class="menu-item danger" id="btn-logout">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4H5v16h5"/><path d="M14 8l4 4-4 4"/><path d="M9 12h9"/></svg>
+    <span class="mi-label">Wyloguj</span>
+  </button>
+</nav>
 
 <main id="view-login" class="view" hidden>
   <div class="login">
@@ -62,14 +100,23 @@
   <div class="fab-wrap">
     <button type="button" class="btn btn-primary fab" id="btn-add">+ Dodaj roślinę</button>
   </div>
-  <p class="app-foot"><button type="button" class="linklike" id="app-refresh">Odśwież aplikację</button></p>
 </main>
 
 <main id="view-plant" class="view plant-view" hidden></main>
 
-<div class="update-banner" id="update-banner" role="status" hidden>
-  <span>Jest nowa wersja greenLy.</span>
-  <button type="button" class="btn btn-primary" id="update-reload">Odśwież</button>
+<div class="modal-backdrop" id="update-backdrop" hidden></div>
+<section class="modal" id="update-modal" role="alertdialog" aria-modal="true" aria-labelledby="update-title" hidden>
+  <div class="modal-body update-body">
+    <span class="update-ico" aria-hidden="true">🌱</span>
+    <h2 id="update-title">Jest nowa wersja greenLy</h2>
+    <p class="muted">Odśwież, żeby korzystać z aktualnej wersji. Zajmie to sekundę, nic nie stracisz.</p>
+    <button type="button" class="btn btn-primary btn-block" id="update-reload">Odśwież teraz</button>
+  </div>
+</section>
+
+<div class="lightbox" id="lightbox" hidden>
+  <img id="lightbox-img" alt="Zdjęcie rośliny">
+  <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Zamknij">✕</button>
 </div>
 
 <div class="modal-backdrop" id="install-backdrop" hidden></div>
@@ -100,7 +147,10 @@
         <span class="plant-meta"></span>
       </span>
     </button>
-    <button type="button" class="btn btn-water">Podlej</button>
+    <span class="plant-btns">
+      <button type="button" class="btn btn-water">Podlej</button>
+      <button type="button" class="btn btn-wet" hidden>Nadal mokro</button>
+    </span>
   </li>
 </template>
 

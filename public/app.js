@@ -90,6 +90,10 @@ const el = {
   backdrop: $('#sheet-backdrop'),
   toasts: $('#toasts'),
   btnPush: $('#btn-push'),
+  pushState: $('#push-state'),
+  menu: $('#menu'),
+  menuBtn: $('#menu-btn'),
+  menuBackdrop: $('#menu-backdrop'),
   iosHint: $('#ios-hint'),
   installModal: $('#install-modal'),
   installBackdrop: $('#install-backdrop'),
@@ -230,9 +234,46 @@ function logout({ remote = true } = {}) {
   el.plantView.replaceChildren();
   closeSheet();
   closeInstall();
+  closeMenu();
   if (location.hash) history.replaceState(null, '', location.pathname);
   showLogin();
 }
+
+// ---------------------------------------------------------------------------
+// hamburger menu
+// ---------------------------------------------------------------------------
+let menuTimer = null;
+function openMenu() {
+  clearTimeout(menuTimer);
+  const u = state.user;
+  $('#menu-login').textContent = u?.login ?? '…';
+  $('#menu-avatar').textContent = (u?.login ?? '?').slice(0, 1);
+  $('#menu-role').textContent = u?.is_admin ? 'administrator' : 'użytkownik';
+  $('#btn-admin').hidden = !u?.is_admin;
+  el.menuBackdrop.hidden = false;
+  el.menu.hidden = false;
+  void el.menu.offsetHeight;
+  el.menuBackdrop.classList.add('open');
+  el.menu.classList.add('open');
+  el.menuBtn.setAttribute('aria-expanded', 'true');
+}
+function closeMenu() {
+  if (el.menu.hidden) return;
+  el.menuBackdrop.classList.remove('open');
+  el.menu.classList.remove('open');
+  el.menuBtn.setAttribute('aria-expanded', 'false');
+  const finish = () => { el.menu.hidden = true; el.menuBackdrop.hidden = true; };
+  clearTimeout(menuTimer);
+  if (reduceMotion.matches) finish(); else menuTimer = setTimeout(finish, 240);
+}
+el.menuBtn.addEventListener('click', () => (el.menu.hidden ? openMenu() : closeMenu()));
+el.menuBackdrop.addEventListener('click', closeMenu);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+$('#menu-home').addEventListener('click', closeMenu);
+$('#btn-admin').addEventListener('click', () => { closeMenu(); openAdmin(); });
+$('#btn-install').addEventListener('click', () => { closeMenu(); openInstall(); });
+$('#btn-refresh').addEventListener('click', () => { closeMenu(); toast('Odświeżam…'); hardRefresh(); });
+$('#btn-logout').addEventListener('click', () => logout());
 
 function setAuthTab(tab) {
   for (const b of $('#auth-tabs').children) {
@@ -292,7 +333,7 @@ $('#register-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('#btn-account').addEventListener('click', () => openAccount());
+$('#btn-account').addEventListener('click', () => { closeMenu(); openAccount(); });
 
 // ---------------------------------------------------------------------------
 // plant list
@@ -329,13 +370,16 @@ async function refresh() {
   }
 }
 
-function metaText(p) {
+/** Status line. On the list a due plant shows the amount instead of the interval (the card is narrow). */
+function metaText(p, { list = false } = {}) {
   const every = ` · co ${p.interval} ${dni(p.interval)}`;
+  const tail = list && p.water_ml ? ` · ok. ${p.water_ml} ml` : every;
   if (p.days_left === null) return 'Brak daty podlania' + every;
-  if (p.days_left > 0) return `Za ${p.days_left} ${dni(p.days_left)}` + every;
-  if (p.days_left === 0) return 'Dziś' + every;
-  return `Spóźnione o ${-p.days_left} ${dni(p.days_left)}` + every;
+  if (p.days_left > 0) return `${p.snoozed ? 'Odłożone · za' : 'Za'} ${p.days_left} ${dni(p.days_left)}` + every;
+  if (p.days_left === 0) return 'Dziś' + tail;
+  return `Spóźnione o ${-p.days_left} ${dni(p.days_left)}` + tail;
 }
+const isDue = (p) => p.days_left !== null && p.days_left <= 0;
 
 function fillPercent(p) {
   if (p.days_left === null) return 0;
@@ -355,7 +399,9 @@ function renderList({ animate = true } = {}) {
       li.dataset.id = p.id;
       li.querySelector('.plant-main').addEventListener('click', () => { location.hash = `plant/${p.id}`; });
       li.querySelector('.btn-water').addEventListener('click', () => water(p.id, li));
+      li.querySelector('.btn-wet').addEventListener('click', () => openSnooze(state.plants.find((x) => x.id === p.id) ?? p));
     }
+    li.querySelector('.btn-wet').hidden = !isDue(p);
     li.classList.toggle('is-overdue', p.days_left !== null && p.days_left < 0);
     li.classList.toggle('is-today', p.days_left === 0);
     li.querySelector('.plant-name').textContent = p.name;
@@ -376,7 +422,7 @@ function renderList({ animate = true } = {}) {
     else if (!animate) fill.style.transition = 'none';
     fill.style.width = `${pct}%`;
     if (!animate) requestAnimationFrame(() => { fill.style.transition = ''; });
-    li.querySelector('.plant-meta').textContent = metaText(p);
+    li.querySelector('.plant-meta').textContent = metaText(p, { list: true });
     frag.appendChild(li);
   }
   el.list.replaceChildren(frag);
@@ -470,11 +516,12 @@ function sortPlants(a, b) {
 function renderListInPlace(p, li) {
   li.classList.toggle('is-overdue', p.days_left !== null && p.days_left < 0);
   li.classList.toggle('is-today', p.days_left === 0);
+  li.querySelector('.btn-wet').hidden = !isDue(p);
   const fill = li.querySelector('.bar-fill');
   const pct = fillPercent(p);
   fill.classList.toggle('low', pct < 20);
   fill.style.width = `${pct}%`;
-  li.querySelector('.plant-meta').textContent = metaText(p);
+  li.querySelector('.plant-meta').textContent = metaText(p, { list: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +564,59 @@ function closeSheet() {
 
 $('#sheet-close').addEventListener('click', closeSheet);
 el.backdrop.addEventListener('click', closeSheet);
+
+// Swipe-down to dismiss. Starts on the handle/header, or on the body only when it is scrolled to the
+// very top and the finger moves clearly downwards — so normal scrolling inside the sheet is untouched.
+// Release: past 30 % of the sheet's height, or a quick flick (> 0.6 px/ms) → close; otherwise snap back.
+let drag = null;
+function dragStart(x, y, target) {
+  const fromHead = !!target.closest('.sheet-handle, .sheet-head');
+  const bodyAtTop = el.sheetBody.contains(target) && el.sheetBody.scrollTop <= 0 && !target.closest('input, textarea, select');
+  if (!fromHead && !bodyAtTop) return;
+  drag = { x0: x, y0: y, dy: 0, active: false, fromHead, samples: [] };
+}
+function dragMove(x, y) {
+  if (!drag) return false;
+  const dy = y - drag.y0;
+  const dx = x - drag.x0;
+  if (!drag.active) {
+    const claim = drag.fromHead ? Math.abs(dy) > 4 : dy > 10 && dy > Math.abs(dx) * 1.5;
+    if (!claim) {
+      if (!drag.fromHead && (dy < -4 || Math.abs(dx) > 10)) drag = null; // a scroll or a horizontal move: not ours
+      return false;
+    }
+    drag.active = true;
+    el.sheet.style.transition = 'none';
+    el.backdrop.style.transition = 'none';
+  }
+  drag.dy = Math.max(0, dy);
+  drag.samples.push([performance.now(), drag.dy]);
+  if (drag.samples.length > 6) drag.samples.shift();
+  el.sheet.style.transform = `translateY(${drag.dy}px)`;
+  el.backdrop.style.opacity = String(1 - Math.min(1, drag.dy / el.sheet.offsetHeight) * 0.85);
+  return true;
+}
+function dragEnd() {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+  el.sheet.style.transition = '';
+  el.backdrop.style.transition = '';
+  el.sheet.style.transform = '';
+  el.backdrop.style.opacity = '';
+  if (!d.active) return;
+  const [t0, y0] = d.samples[0];
+  const [t1, y1] = d.samples[d.samples.length - 1];
+  const velocity = t1 > t0 ? (y1 - y0) / (t1 - t0) : 0; // px/ms over the last few samples
+  if (d.dy > el.sheet.offsetHeight * 0.3 || (velocity > 0.6 && d.dy > 24)) closeSheet();
+}
+el.sheet.addEventListener('touchstart', (e) => dragStart(e.touches[0].clientX, e.touches[0].clientY, e.target), { passive: true });
+el.sheet.addEventListener('touchmove', (e) => { if (dragMove(e.touches[0].clientX, e.touches[0].clientY)) e.preventDefault(); }, { passive: false });
+el.sheet.addEventListener('touchend', dragEnd);
+el.sheet.addEventListener('touchcancel', dragEnd);
+el.sheet.addEventListener('mousedown', (e) => { if (e.button === 0 && e.target.closest('.sheet-handle, .sheet-head') && !e.target.closest('button')) { dragStart(e.clientX, e.clientY, e.target); e.preventDefault(); } });
+document.addEventListener('mousemove', (e) => { if (drag) dragMove(e.clientX, e.clientY); });
+document.addEventListener('mouseup', dragEnd);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !el.sheet.hidden) closeSheet(); });
 
 // ---------------------------------------------------------------------------
@@ -542,7 +642,7 @@ function openAdd() {
       </form>
     </div>`;
 
-  const draft = { thumb: null };
+  const draft = { thumb: null, full: null };
 
   $('#photo-input').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
@@ -552,8 +652,9 @@ function openAdd() {
     results.replaceChildren();
     status.textContent = 'Przygotowuję zdjęcie…';
     try {
-      const { upload, thumb } = await processImage(file);
+      const { upload, thumb, full } = await processImage(file);
       draft.thumb = thumb;
+      draft.full = full;
       const preview = $('#photo-preview');
       preview.src = thumb;
       preview.hidden = false;
@@ -577,7 +678,7 @@ function openAdd() {
     btn.disabled = true;
     try {
       const { species, profile } = await api('lookup', { json: { species: name } });
-      openForm({ species, common: '', genus: '', family: '', profile, thumb: draft.thumb });
+      openForm({ species, common: '', genus: '', family: '', profile, thumb: draft.thumb, full: draft.full });
     } catch (err) {
       toast(err.message, 'error');
     } finally {
@@ -602,7 +703,7 @@ function renderResults(list, draft) {
           <span class="lvl">${esc(r.profile.label)} · ${LEVEL_LABEL[r.profile.level]}</span>
         </span>
       </button>`;
-    li.querySelector('button').addEventListener('click', () => openForm({ ...r, thumb: draft.thumb }));
+    li.querySelector('button').addEventListener('click', () => openForm({ ...r, thumb: draft.thumb, full: draft.full }));
     ul.appendChild(li);
   }
 }
@@ -636,9 +737,10 @@ async function processImage(file) {
   c2.height = 320;
   c2.getContext('2d').drawImage(bitmap, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 320, 320);
   const thumb = c2.toDataURL('image/jpeg', 0.8);
+  const full = c1.toDataURL('image/jpeg', 0.82); // stored next to the thumbnail for the lightbox
 
   bitmap.close?.();
-  return { upload, thumb };
+  return { upload, thumb, full };
 }
 
 // ---------------------------------------------------------------------------
@@ -724,7 +826,7 @@ function openForm(ctx) {
     </form>`;
 
   const form = $('#plant-form');
-  const draft = { photo: undefined }; // undefined = unchanged, data URL = new thumbnail, null = remove
+  const draft = { photo: undefined, full: null }; // photo: undefined = unchanged, data URL = new thumbnail, null = remove
   const setThumb = (src) => {
     const t = $('#form-thumb');
     t.classList.toggle('has-photo', !!src);
@@ -737,8 +839,9 @@ function openForm(ctx) {
     e.target.value = '';
     if (!file) return;
     try {
-      const { thumb } = await processImage(file);
+      const { thumb, full } = await processImage(file);
       draft.photo = thumb;
+      draft.full = full;
       setThumb(thumb);
     } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
   });
@@ -778,8 +881,8 @@ function openForm(ctx) {
         last_watered: form.last_watered.value || null,
         note: form.note.value,
       };
-      if (draft.photo !== undefined) payload.photo = draft.photo;
-      else if (ctx.thumb) payload.photo = ctx.thumb;
+      if (draft.photo !== undefined) { payload.photo = draft.photo; payload.photo_full = draft.full; }
+      else if (ctx.thumb) { payload.photo = ctx.thumb; payload.photo_full = ctx.full ?? null; }
       const { plant } = await api('save', { json: payload });
       toast(isEdit ? 'Zapisano.' : 'Dodano roślinę.');
       closeSheet();
@@ -830,6 +933,7 @@ async function swReady(ms = 6000) {
 async function refreshPushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     el.btnPush.setAttribute('aria-pressed', 'false');
+    el.pushState.textContent = isIOS && !isStandalone ? 'po instalacji' : 'brak';
     return;
   }
   try {
@@ -837,10 +941,11 @@ async function refreshPushState() {
     state.pushSub = await reg.pushManager.getSubscription();
   } catch { state.pushSub = null; }
   el.btnPush.setAttribute('aria-pressed', state.pushSub ? 'true' : 'false');
-  el.btnPush.textContent = state.pushSub ? 'Powiadomienia: wł.' : 'Powiadomienia';
+  el.pushState.textContent = state.pushSub ? 'wł.' : 'wył.';
 }
 
 el.btnPush.addEventListener('click', async () => {
+  closeMenu();
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     toast(isIOS && !isStandalone
       ? 'Na iPhonie dodaj greenLy do ekranu początkowego i włącz powiadomienia z ikony.'
@@ -973,7 +1078,7 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
   el.plantView.innerHTML = `
     <a class="back" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Rośliny</a>
     <div class="pv-head">
-      <span class="thumb ${photo ? 'has-photo' : ''}"><img alt="" ${photo ? `src="${esc(photo)}"` : ''}></span>
+      ${photo ? `<button type="button" class="thumb has-photo thumb-btn" id="pv-photo" aria-label="Powiększ zdjęcie"><img alt="" src="${esc(photo)}"></button>` : '<span class="thumb"><img alt=""></span>'}
       <div>
         <h1>${esc(p.name)}</h1>
         <div class="sci">${esc(p.species) || '—'}${p.common ? ` · ${esc(p.common)}` : ''}</div>
@@ -985,6 +1090,10 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
       <span class="plant-meta">${esc(metaText(p))}</span>
       <button type="button" class="btn btn-water" id="pv-water">Podlej</button>
     </div>
+    <p class="pv-ml">
+      <span>Na raz ok. <b>${p.water_ml} ml</b> — aż woda pokaże się w podstawce, nadmiar wylej.</span>
+      <button type="button" class="btn btn-wet" id="pv-wet" ${isDue(p) ? '' : 'hidden'}>Nadal mokro</button>
+    </p>
     <div class="pv-actions">
       <button type="button" class="btn btn-soft" id="pv-checkup" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Kontrola</button>
       <button type="button" class="btn btn-soft" id="pv-doctor" ${state.ai ? '' : 'disabled title="Dodaj klucz Anthropic w Konto"'}>Doktor</button>
@@ -1044,6 +1153,8 @@ function renderPlant({ plant: p, care, waterings, checks, events = [] }) {
   }));
   $('#pv-event').addEventListener('click', () => openEventPicker(p));
   $('#pv-split').addEventListener('click', () => openSplitForm(p));
+  $('#pv-wet').addEventListener('click', () => openSnooze(p));
+  $('#pv-photo')?.addEventListener('click', () => openLightbox(p.photo_full ? photoSrc(p.photo_full) : photo));
 
   const items = buildTimeline({ plant: p, waterings, checks, events, answered });
   const drawTimeline = () => {
@@ -1098,7 +1209,82 @@ function renderStatusInPlace(p) {
   fill.classList.toggle('low', pct < 20);
   fill.style.width = `${pct}%`;
   st.querySelector('.plant-meta').textContent = metaText(p);
+  const wet = $('#pv-wet');
+  if (wet) wet.hidden = !isDue(p);
 }
+
+// ---------------------------------------------------------------------------
+// "still wet": push the reminder instead of watering into soggy soil
+// ---------------------------------------------------------------------------
+function openSnooze(p) {
+  openSheet(`Nadal mokro: ${p.name}`);
+  el.sheetBody.innerHTML = `
+    <div class="preview" style="margin-bottom:14px">
+      <strong>Nie podlewaj</strong>
+      dopóki 2–3 cm podłoża pod powierzchnią nie przeschną. Sprawdź palcem albo patyczkiem.
+      <div class="note">Plan zakłada ok. <b>${p.water_ml} ml</b> na raz przy tej doniczce. Jeśli ziemia jest mokra po tylu dniach, przy następnym podlaniu wlej mniej albo sprawdź, czy w osłonce nie stoi woda.</div>
+    </div>
+    <p class="muted" style="margin:0 0 8px">Przypomnę ponownie za:</p>
+    <div class="snooze-grid">
+      ${[1, 2, 3, 5].map((d) => `<button type="button" class="btn ${d === 2 ? 'btn-soft' : ''}" data-days="${d}">${d} ${dni(d)}</button>`).join('')}
+    </div>
+    <div class="field" style="margin-top:14px"><label for="snooze-note">Notatka (opcjonalnie)</label><input type="text" id="snooze-note" maxlength="200" placeholder="np. osłonka była pełna wody"></div>
+    <p class="hint">Odłożenie trafia do historii. Jeśli powtarza się co podlanie, zmień w edycji doniczkę na „bez odpływu” albo światło na ciemniejsze — interwał się wydłuży.</p>`;
+  for (const b of el.sheetBody.querySelectorAll('.snooze-grid .btn')) {
+    b.addEventListener('click', async () => {
+      const days = Number(b.dataset.days);
+      for (const x of el.sheetBody.querySelectorAll('.snooze-grid .btn')) x.disabled = true;
+      try {
+        const { plant } = await api('postpone', { json: { id: p.id, days, note: $('#snooze-note').value.trim() } });
+        const i = state.plants.findIndex((x) => x.id === p.id);
+        if (i >= 0) state.plants[i] = plant;
+        toast(`Przypomnę za ${days} ${dni(days)}.`);
+        closeSheet();
+        state.plants.sort(sortPlants);
+        renderList();
+        if (state.plantView === p.id) showPlant(p.id);
+      } catch (err) {
+        toast(err.message, 'error');
+        for (const x of el.sheetBody.querySelectorAll('.snooze-grid .btn')) x.disabled = false;
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// lightbox: tap a photo to see it full screen; double-tap toggles 2.5× zoom
+// ---------------------------------------------------------------------------
+const lightbox = $('#lightbox');
+const lightboxImg = $('#lightbox-img');
+function openLightbox(src) {
+  lightboxImg.src = src;
+  lightboxImg.classList.remove('zoomed');
+  lightbox.hidden = false;
+  void lightbox.offsetHeight;
+  lightbox.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  if (lightbox.hidden) return;
+  lightbox.classList.remove('open');
+  document.body.style.overflow = el.sheet.hidden ? '' : 'hidden';
+  const finish = () => { lightbox.hidden = true; lightboxImg.src = ''; };
+  if (reduceMotion.matches) finish(); else setTimeout(finish, 220);
+}
+$('#lightbox-close').addEventListener('click', closeLightbox);
+lightbox.addEventListener('click', (e) => { if (e.target === lightbox) closeLightbox(); });
+lightboxImg.addEventListener('dblclick', () => lightboxImg.classList.toggle('zoomed'));
+let lastTap = 0;
+lightboxImg.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (now - lastTap < 300) { e.preventDefault(); lightboxImg.classList.toggle('zoomed'); }
+  lastTap = now;
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+el.sheetBody.addEventListener('click', (e) => {
+  const img = e.target.closest('.check-photos img');
+  if (img) openLightbox(img.src);
+});
 
 function renderProfile(pr) {
   const row = (k, v) => (v ? `<p><b>${k}:</b> ${esc(v)}</p>` : '');
@@ -1303,6 +1489,7 @@ const EVENT_DEFS = {
   growth: { icon: '🌱', label: 'Nowy przyrost', hint: 'liść, pęd, korzeń' },
   note: { icon: '📝', label: 'Notatka', hint: 'cokolwiek innego' },
 };
+const HIDDEN_EVENTS = { snooze: { icon: '⏳', label: 'Odłożone podlanie' } }; // logged by the app, not picked by hand
 let histFilter = 'all';
 
 const SHORT_MATERIAL = { terracotta: 'terakota', ceramic: 'ceramika', plastic: 'plastik', cachepot: 'bez odpływu' };
@@ -1317,6 +1504,7 @@ function eventDetail(e) {
   if (e.type === 'split') bits.push(d.role === 'child'
     ? `odłączona od <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`
     : `oddzielono <a href="#plant/${d.sibling_id}">${esc(d.sibling_name)}</a>`);
+  if (e.type === 'snooze') bits.push(`nadal mokro · o ${d.days} ${dni(d.days)}${d.until ? ` (do ${fmtDate(d.until)})` : ''}`);
   if (d.watered) bits.push('podlana przy okazji');
   if (e.note) bits.push(esc(e.note));
   return bits.join(' · ');
@@ -1325,7 +1513,7 @@ function eventDetail(e) {
 function buildTimeline({ plant, waterings, checks, events, answered }) {
   const items = [];
   for (const e of events) {
-    const def = EVENT_DEFS[e.type] ?? { icon: '•', label: e.type };
+    const def = EVENT_DEFS[e.type] ?? HIDDEN_EVENTS[e.type] ?? { icon: '•', label: e.type };
     items.push({ key: `e${e.id}`, kind: 'event', id: e.id, cat: 'care', ts: e.ts, icon: def.icon, title: def.label, detail: eventDetail(e), removable: true });
   }
   for (const w of waterings) items.push({ key: `w${w.id}`, kind: 'water', id: w.id, cat: 'water', ts: w.ts, icon: '💧', title: 'Podlanie', detail: '', removable: true });
@@ -1449,14 +1637,16 @@ function openSplitForm(p) {
     </form>`;
   const form = $('#split-form');
   let photo = null;
+  let photoFull = null;
   form.addEventListener('input', () => { $('#s-pot-value').textContent = form.pot_cm.value; });
   $('#split-photo').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
-      const { thumb } = await processImage(file);
+      const { thumb, full } = await processImage(file);
       photo = thumb;
+      photoFull = full;
       $('#split-thumb').classList.add('has-photo');
       $('#split-thumb img').src = thumb;
     } catch { toast('Nie udało się przetworzyć zdjęcia.', 'error'); }
@@ -1469,7 +1659,7 @@ function openSplitForm(p) {
     try {
       const { plant } = await api('split', { json: {
         id: p.id, name: form.name.value.trim(), pot_cm: Number(form.pot_cm.value), pot_material: form.pot_material.value,
-        watered: form.watered.checked, date: form.date.value, note: form.note.value.trim(), photo,
+        watered: form.watered.checked, date: form.date.value, note: form.note.value.trim(), photo, photo_full: photoFull,
       } });
       toast(`Utworzono „${plant.name}”.`);
       closeSheet();
@@ -1951,7 +2141,19 @@ async function checkForUpdate() {
   const tag = await fetchAssetTag();
   if (!tag) return;
   if (assetTag === null) { assetTag = tag; return; }
-  if (tag !== assetTag) $('#update-banner').hidden = false;
+  if (tag !== assetTag) showUpdateModal();
+}
+function showUpdateModal() {
+  const m = $('#update-modal');
+  if (!m.hidden) return;
+  closeMenu();
+  $('#update-backdrop').hidden = false;
+  m.hidden = false;
+  void m.offsetHeight;
+  $('#update-backdrop').classList.add('open');
+  m.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  $('#update-reload').focus();
 }
 async function hardRefresh() {
   try {
@@ -1963,7 +2165,6 @@ async function hardRefresh() {
   location.reload();
 }
 $('#update-reload').addEventListener('click', hardRefresh);
-$('#app-refresh').addEventListener('click', () => { toast('Odświeżam…'); hardRefresh(); });
 checkForUpdate();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
 setInterval(checkForUpdate, 30 * 60 * 1000);

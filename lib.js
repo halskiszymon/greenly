@@ -253,6 +253,8 @@ export function openDb(file = DB_FILE) {
   ensureColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'invite_code', 'TEXT');
   ensureColumn(db, 'users', 'use_global_key', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'plants', 'snoozed_until', 'TEXT'); // "still wet": reminder pushed to this date
+  ensureColumn(db, 'plants', 'photo_full', 'TEXT');    // large photo for the lightbox; `photo` stays the thumbnail
   db.exec(`
     CREATE INDEX IF NOT EXISTS plants_user ON plants(user_id);
     CREATE INDEX IF NOT EXISTS subs_user ON subs(user_id);
@@ -267,6 +269,16 @@ export function ensureColumn(db, table, column, type) {
   if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
+// Rough amount per watering: ~10 % of the pot volume (cylinder, height ≈ diameter); drought-loving
+// groups get less, moisture-loving more. Only a hint — "water until it drains" still applies.
+const ML_FACTOR = { succulent: 0.06, cactus: 0.05, compact: 0.08, fern: 0.13, marantaceae: 0.12, aroid: 0.11, universal: 0.1 };
+export function wateringMl(p) {
+  const cm = Number(p.pot_cm) || 15;
+  const volume = Math.PI * (cm / 2) ** 2 * cm; // ml
+  const ml = volume * (ML_FACTOR[p.group_key] ?? 0.1);
+  return Math.max(30, Math.round(ml / 10) * 10);
+}
+
 /** Row → API object with computed schedule fields. */
 export function decoratePlant(row, now = new Date()) {
   const c = getCare();
@@ -279,6 +291,13 @@ export function decoratePlant(row, now = new Date()) {
     next_due = toDateString(due);
     days_left = daysBetween(now, due);
   }
+  const snooze = parseDateString(row.snoozed_until);
+  let snoozed = false;
+  if (snooze && last && snooze > parseDateString(next_due)) {
+    next_due = toDateString(snooze);
+    days_left = daysBetween(now, snooze);
+    snoozed = true;
+  }
   const g = c.groups[row.group_key] ?? c.groups.universal;
   const level = matchProfile(row).level;
   let profile = null;
@@ -287,10 +306,13 @@ export function decoratePlant(row, now = new Date()) {
     ...row,
     dry_air: !!row.dry_air,
     photo: row.photo ? `api/photo/${row.photo}` : null,
+    photo_full: row.photo_full ? `api/photo/${row.photo_full}` : null,
     profile,
     interval,
     next_due,
     days_left,
+    snoozed,
+    water_ml: wateringMl(row),
     group_label: g.label,
     group_note: g.note,
     match_level: level,
@@ -333,10 +355,19 @@ export function insertPlant(db, p) {
 export function updatePlant(db, id, p) {
   db.prepare(`
     UPDATE plants SET name=?, species=?, common=?, genus=?, family=?, group_key=?, base_summer=?, base_winter=?,
-                      pot_cm=?, pot_material=?, light=?, dry_air=?, photo=?, note=?, last_watered=?
+                      pot_cm=?, pot_material=?, light=?, dry_air=?, photo=?, photo_full=?, note=?, last_watered=?
     WHERE id=?
   `).run(p.name, p.species, p.common, p.genus, p.family, p.group_key, p.base_summer, p.base_winter,
-    p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.note, p.last_watered, id);
+    p.pot_cm, p.pot_material, p.light, p.dry_air ? 1 : 0, p.photo, p.photo_full ?? null, p.note, p.last_watered, id);
+}
+
+/** "Still wet": push the reminder to `days` after today or the current due date, whichever is later. */
+export function snoozePlant(db, id, days, now = new Date()) {
+  const p = decoratePlant(getPlant(db, id), now);
+  const base = p.next_due && parseDateString(p.next_due) > now ? parseDateString(p.next_due) : now;
+  const until = toDateString(addDays(base, days));
+  db.prepare('UPDATE plants SET snoozed_until = ?, last_notified = NULL WHERE id = ?').run(until, id);
+  return until;
 }
 
 /** Timestamp for a dated entry: now, or noon local time of the given date (so a date-only entry sorts sanely). */
@@ -350,7 +381,7 @@ function wateringTs(date) {
 
 /** Marks the plant watered, appends to the history. Returns the new watering id (for undo). */
 export function waterPlant(db, id, date = toDateString()) {
-  db.prepare('UPDATE plants SET last_watered = ?, last_notified = NULL WHERE id = ?').run(date, id);
+  db.prepare('UPDATE plants SET last_watered = ?, last_notified = NULL, snoozed_until = NULL WHERE id = ?').run(date, id);
   const r = db.prepare('INSERT INTO waterings (plant_id, ts) VALUES (?, ?)').run(id, wateringTs(date));
   return Number(r.lastInsertRowid);
 }
@@ -390,6 +421,7 @@ export function deletePlant(db, id) {
   const checkRows = db.prepare('SELECT photo, photos FROM health_checks WHERE plant_id = ?').all(id);
   db.prepare('DELETE FROM plants WHERE id = ?').run(id);
   if (row.photo) fs.rmSync(path.join(PHOTO_DIR, row.photo), { force: true });
+  if (row.photo_full) fs.rmSync(path.join(PHOTO_DIR, row.photo_full), { force: true });
   for (const c of checkRows) for (const name of checkPhotoNames(c)) fs.rmSync(path.join(PHOTO_DIR, name), { force: true });
   return true;
 }
@@ -484,6 +516,7 @@ export function deleteSub(db, endpoint, userId = null) {
 // ---------------------------------------------------------------------------
 
 export const PHOTO_MAX_BYTES = 600 * 1024;
+export const PHOTO_FULL_MAX_BYTES = 2 * 1024 * 1024;
 const PHOTO_TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
 
 function sniffImage(buf) {
@@ -494,11 +527,11 @@ function sniffImage(buf) {
 }
 
 /** Validates and stores a data URL (thumbnail). Returns the stored file name. Throws Error with .status on bad input. */
-export function storePhoto(dataUrl, plantId) {
+export function storePhoto(dataUrl, plantId, maxBytes = PHOTO_MAX_BYTES) {
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl ?? '');
   if (!m) throw Object.assign(new Error('Nieobsługiwany format zdjęcia.'), { status: 400 });
   const buf = Buffer.from(m[2], 'base64');
-  if (buf.length > PHOTO_MAX_BYTES) throw Object.assign(new Error('Zdjęcie jest za duże (limit 600 KB).'), { status: 413 });
+  if (buf.length > maxBytes) throw Object.assign(new Error(`Zdjęcie jest za duże (limit ${Math.round(maxBytes / 1024)} KB).`), { status: 413 });
   return storePhotoBuffer(buf, m[1], plantId);
 }
 
@@ -792,7 +825,7 @@ export async function loadConfig() {
 // ---------------------------------------------------------------------------
 // Care events (repotting, division, moving, feeding, …) — the plant's timeline
 // ---------------------------------------------------------------------------
-export const EVENT_TYPES = ['repot', 'split', 'move', 'fertilize', 'prune', 'treat', 'shower', 'bloom', 'growth', 'note'];
+export const EVENT_TYPES = ['repot', 'split', 'move', 'fertilize', 'prune', 'treat', 'shower', 'bloom', 'growth', 'note', 'snooze'];
 
 function decorateEvent(row) {
   if (!row) return null;

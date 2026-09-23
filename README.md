@@ -68,6 +68,10 @@ days = speciesBase(season) × pot × material × light × air     → rounded, c
 for the live preview in the form; `test/estimate-sync.test.mjs` fails if the two drift apart.
 
 Dates are handled at day granularity in the configured timezone: `days_left = interval − daysSince(last_watered)`.
+A "still wet" snooze (`plants.snoozed_until`) overrides `next_due` when it is later; the API marks such plants `snoozed`.
+
+`water_ml` is a hint per watering: ~10 % of the pot volume (cylinder with height = diameter), 5–8 % for cacti,
+succulents and compact plants, 11–13 % for aroids, marantas and ferns, rounded to 10 ml (`lib.js#wateringMl`).
 
 ## care.json
 
@@ -103,9 +107,10 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 | GET | `plants` | `{plants:[…], today, ai, user}`; each plant carries `interval`, `next_due`, `days_left`, `group_label`, `group_note`, `match_level`; `ai` = this user has a key |
 | POST | `identify` | multipart, field `image` (jpeg/png/webp, ≤ 8 MB) → top 5 `{score, species, genus, family, common[], profile}`; 404 = not recognized, 429 = daily quota, 503 = no key configured |
 | POST | `lookup` | `{species}` → `{species, profile}` for a manually typed name |
-| POST | `save` | create (`id` null) or update; optional `photo` as data URL (jpeg/png/webp, ≤ 600 KB, magic bytes checked) stored in `data/photos/`; `photo: null` removes it |
+| POST | `save` | create (`id` null) or update; optional `photo` (thumbnail data URL, ≤ 600 KB) plus `photo_full` (≤ 2 MB, shown in the lightbox), both jpeg/png/webp with magic bytes checked, stored in `data/photos/`; `photo: null` removes both |
 | POST | `water` | `{id, date?}` → sets `last_watered`, appends to `waterings`, clears `last_notified`; returns `{plant, watering_id}` (the UI offers a 5 s undo) |
 | POST | `unwater` | `{watering_id}` → deletes that history row and recomputes `last_watered` from the remaining ones (undo, or removing a wrong entry) |
+| POST | `postpone` | `{id, days (1–7), note?}` — "still wet": sets `snoozed_until` to today (or the due date, if later) + days and logs a `snooze` event → `{plant, until}`. Watering clears it |
 | POST | `delete` | `{id}` → removes plant, its history and photo |
 | GET | `vapid` | `{publicKey}` |
 | POST | `subscribe` / `unsubscribe` | PushSubscription JSON / `{endpoint}` |
@@ -127,7 +132,7 @@ Every plant, watering, event, check, photo and subscription is scoped to the ses
 - `settings` — key (PK), value: `global_anthropic_key` (encrypted), `global_model`, `global_effort`
 - `users.use_global_key` — 1 = analyses run on the global key with its model/effort; the user's own key settings are locked and the account screen says so
 - `plants` — id, user_id, name, species, common, genus, family, group_key, base_summer, base_winter, pot_cm,
-  pot_material, light, dry_air, photo, note, last_watered, last_notified, created_at
+  pot_material, light, dry_air, photo, photo_full, note, last_watered, last_notified, snoozed_until, created_at
 - `waterings` — id, plant_id, ts. Every `last_watered` has a matching row: `save` adds one for a manually entered date, and `openDb()` backfills legacy plants without history.
 - `subs` — endpoint (PK), p256dh, auth, user_id, created_at. Re-subscribing from the same browser moves the endpoint to the current user.
 - `events` — id, plant_id, type, ts, note, data (JSON: before/after values for repot/move, sibling for split, `watered`), created_at. The profile's timeline merges events, waterings, health checks and `created_at`.
@@ -149,6 +154,10 @@ The encryption secret is `config.secretKey` or, when empty, a random one written
 - **Install prompt:** outside standalone mode the app shows a modal with platform-specific steps (iOS share sheet,
   Android/desktop `beforeinstallprompt` button or menu) after registration and on every visit until the user ticks
   "I know I won't get reminders" and chooses to stay in the browser (`localStorage` `greenly.webok`). "Konto → Jak zainstalować" reopens it.
+- **Menu:** a hamburger in the top bar opens a panel with the account, notifications toggle (with state), admin panel,
+  install help, refresh and logout. The bottom sheet can be swiped down to dismiss (from the handle/header, or from
+  the body when it is scrolled to the top). Tapping a plant or check-up photo opens a full-screen lightbox
+  (double-tap zooms). A new deploy shows a blocking dialog with a single "refresh" button.
 - **Instant paint:** the last `plants` response and each opened plant view are cached in `localStorage`
   (`greenly.cache.*`); views render from the cache first and re-render only when the fresh response differs, so
   reopening the app or returning from a sheet does not flash skeletons or jump the scroll position.

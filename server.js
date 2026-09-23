@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import {
   ROOT, PHOTO_DIR, openDb, loadConfig, loadCare, matchProfile, groupCare,
   listPlants, getPlant, insertPlant, updatePlant, waterPlant, deletePlant, setProfile, listWaterings,
-  ensureWateringRow, deleteWatering, tsForDate,
+  ensureWateringRow, deleteWatering, tsForDate, snoozePlant, PHOTO_FULL_MAX_BYTES,
   EVENT_TYPES, insertEvent, getEvent, listEvents, deleteEvent,
   insertCheck, getCheck, listChecks, checkChain, checkPhotoNames,
   upsertSub, deleteSub, storePhoto, storePhotoBuffer, readPhotoBase64, sniffImageType, removePhoto, photoBelongsTo,
@@ -31,7 +31,7 @@ let db;
 let secret; // server secret for encrypting per-user API keys
 
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const JSON_LIMIT = 2 * 1024 * 1024;
+const JSON_LIMIT = 6 * 1024 * 1024; // save: thumbnail + full-size photo as base64 data URLs
 const UPLOAD_LIMIT = 24 * 1024 * 1024; // up to 4 check-up photos of ≤ 5 MB
 const MAX_CHECK_PHOTOS = 4;
 
@@ -399,7 +399,7 @@ const actions = {
     const existing = getPlant(db, id, u.id);
     if (!existing) throw new HttpError(404, 'Nie ma takiej rośliny.');
     const type = String(b.type ?? '');
-    if (!EVENT_TYPES.includes(type) || type === 'split') throw new HttpError(400, 'Nieznany typ zdarzenia.');
+    if (!EVENT_TYPES.includes(type) || type === 'split' || type === 'snooze') throw new HttpError(400, 'Nieznany typ zdarzenia.');
     const date = b.date ? parseDateString(String(b.date)) && String(b.date) : null;
     if (b.date && !date) throw new HttpError(400, 'Nieprawidłowa data.');
     const note = str(b.note, 500);
@@ -460,7 +460,11 @@ const actions = {
     };
     const childId = insertPlant(db, child);
     if (typeof b.photo === 'string' && b.photo.startsWith('data:')) {
-      try { updatePlant(db, childId, { ...child, photo: storePhoto(b.photo, childId) }); } catch (e) {
+      try {
+        const photo = storePhoto(b.photo, childId);
+        const photo_full = typeof b.photo_full === 'string' && b.photo_full.startsWith('data:') ? storePhoto(b.photo_full, childId, PHOTO_FULL_MAX_BYTES) : null;
+        updatePlant(db, childId, { ...child, photo, photo_full });
+      } catch (e) {
         deletePlant(db, childId);
         throw e;
       }
@@ -609,6 +613,7 @@ const actions = {
       note: str(b.note, 500),
       last_watered,
       photo: existing?.photo ?? null,
+      photo_full: existing?.photo_full ?? null,
       user_id: u.id,
     };
 
@@ -618,15 +623,20 @@ const actions = {
     if (typeof b.photo === 'string' && b.photo.startsWith('data:')) {
       try {
         const stored = storePhoto(b.photo, plantId);
+        const storedFull = typeof b.photo_full === 'string' && b.photo_full.startsWith('data:') ? storePhoto(b.photo_full, plantId, PHOTO_FULL_MAX_BYTES) : null;
         removePhoto(existing?.photo);
+        removePhoto(existing?.photo_full);
         plant.photo = stored;
+        plant.photo_full = storedFull;
       } catch (e) {
         if (!existing) deletePlant(db, plantId);
         throw new HttpError(e.status ?? 400, e.message);
       }
     } else if (b.photo === null && existing?.photo) {
       removePhoto(existing.photo);
+      removePhoto(existing.photo_full);
       plant.photo = null;
+      plant.photo_full = null;
     }
 
     updatePlant(db, plantId, plant);
@@ -643,6 +653,21 @@ const actions = {
     if (!parseDateString(date)) throw new HttpError(400, 'Nieprawidłowa data.');
     const watering_id = waterPlant(db, id, date);
     sendJson(res, 200, { plant: myPlant(u, id), watering_id });
+  },
+
+  // "Still wet": {id, days (1–7), note?} → reminder moved by `days`, logged as a snooze event.
+  async postpone(req, res, url) {
+    const u = requireAuth(req, url);
+    const b = await readJson(req);
+    const id = Number(b.id);
+    const plant = getPlant(db, id, u.id);
+    if (!plant) throw new HttpError(404, 'Nie ma takiej rośliny.');
+    if (!plant.last_watered) throw new HttpError(400, 'Ta roślina nie ma jeszcze daty podlania.');
+    const days = Math.round(Number(b.days));
+    if (!Number.isFinite(days) || days < 1 || days > 7) throw new HttpError(400, 'Odłóż o 1–7 dni.');
+    const until = snoozePlant(db, id, days);
+    insertEvent(db, { plant_id: id, type: 'snooze', note: str(b.note, 200), data: { days, until } });
+    sendJson(res, 200, { plant: myPlant(u, id), until });
   },
 
   // Removes one watering (undo, or a wrong entry in the history) and recomputes last_watered.
