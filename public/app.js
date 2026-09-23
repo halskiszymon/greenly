@@ -3,7 +3,7 @@
 // Bump on every deploy together with the ?v= query strings in index.html and CACHE in sw.js
 // (test/version.test.mjs checks they match). The server reads this constant from the file and
 // the running app compares it with /api/version to offer a reload after a deploy.
-export const APP_VERSION = '10';
+export const APP_VERSION = '11';
 
 const API = './api/';
 const TOKEN_KEY = 'greenly.token';
@@ -219,12 +219,13 @@ function photoUrl(p) {
 // ---------------------------------------------------------------------------
 // auth
 // ---------------------------------------------------------------------------
+const SEEN_KEY = 'greenly.seen'; // set after the first successful login: returning visitors skip the intro tab
 function showLogin() {
   el.login.hidden = false;
   el.app.hidden = true;
   el.plantView.hidden = true;
   el.actions.hidden = true;
-  $('#login-user').focus();
+  setAuthTab(localStorage.getItem(SEEN_KEY) ? 'login' : 'start');
 }
 
 function logout({ remote = true } = {}) {
@@ -287,16 +288,27 @@ function setAuthTab(tab) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   }
+  $('#start-panel').hidden = tab !== 'start';
   $('#login-form').hidden = tab !== 'login';
   $('#register-form').hidden = tab !== 'register';
-  $(tab === 'login' ? '#login-user' : '#reg-user').focus();
+  if (tab === 'login') $('#login-user').focus();
+  if (tab === 'register') $('#reg-user').focus();
+  window.scrollTo(0, 0);
 }
 $('#auth-tabs').addEventListener('click', (e) => { const b = e.target.closest('.auth-tab'); if (b) setAuthTab(b.dataset.tab); });
+$('#start-register').addEventListener('click', () => setAuthTab('register'));
+$('#start-login').addEventListener('click', () => setAuthTab('login'));
+$('#login-forgot').addEventListener('click', (e) => {
+  const panel = $('#forgot-panel');
+  panel.hidden = !panel.hidden;
+  e.currentTarget.setAttribute('aria-expanded', panel.hidden ? 'false' : 'true');
+});
 
 async function startSession({ token, user }, { fresh = false } = {}) {
   state.token = token;
   state.user = user;
   localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(SEEN_KEY, '1');
   await enterApp({ fresh });
 }
 

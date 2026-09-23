@@ -12,7 +12,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./img/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="./img/icon-192.png">
-  <link rel="stylesheet" href="./styles.css?v=10">
+  <link rel="stylesheet" href="./styles.css?v=11">
 </head>
 <body>
 
@@ -65,16 +65,40 @@
 <main id="view-login" class="view" hidden>
   <div class="login">
     <div class="auth-tabs" role="tablist" id="auth-tabs">
-      <button type="button" role="tab" class="auth-tab active" data-tab="login" aria-selected="true">Logowanie</button>
+      <button type="button" role="tab" class="auth-tab active" data-tab="start" aria-selected="true">Start</button>
+      <button type="button" role="tab" class="auth-tab" data-tab="login" aria-selected="false">Logowanie</button>
       <button type="button" role="tab" class="auth-tab" data-tab="register" aria-selected="false">Rejestracja</button>
     </div>
-    <form id="login-form" novalidate>
+    <section id="start-panel" class="start">
+      <div class="start-hero">
+        <img src="./img/icon-192.png" alt="" width="64" height="64">
+        <h1>green<b>L</b>y</h1>
+        <p>Twoje rośliny doniczkowe, podlane na czas. Bez zgadywania.</p>
+      </div>
+      <ul class="start-features">
+        <li><span class="ico" aria-hidden="true">📷</span><span><b>Zdjęcie zamiast atlasu.</b> Sfotografuj roślinę, a greenLy rozpozna gatunek i dobierze do niego plan podlewania.</span></li>
+        <li><span class="ico" aria-hidden="true">💧</span><span><b>Plan pod Twoje warunki.</b> Doniczka, światło, suche powietrze, pora roku: interwał i porcja wody liczą się z tego, gdzie roślina naprawdę stoi.</span></li>
+        <li><span class="ico" aria-hidden="true">🔔</span><span><b>Przypomnienia na telefon.</b> Powiadomienie w dniu podlania. Jeśli ziemia nadal mokra, jeden tap odkłada termin, a apka uczy się na tym.</span></li>
+        <li><span class="ico" aria-hidden="true">🩺</span><span><b>Kontrola i Doktor.</b> Zdjęcie do Claude: ocena stanu, diagnoza problemu z dopytaniem, profil pielęgnacji gatunku. Na Twoim kluczu, za centy.</span></li>
+        <li><span class="ico" aria-hidden="true">📖</span><span><b>Historia każdej rośliny.</b> Podlewania, przesadzenia, rozsadzanie, nawożenie, analizy: wszystko na jednej osi czasu.</span></li>
+      </ul>
+      <div class="start-actions">
+        <button type="button" class="btn btn-primary" id="start-register">Załóż konto</button>
+        <button type="button" class="btn" id="start-login">Mam już konto</button>
+      </div>
+      <p class="auth-hint">Prywatna instancja, konta na zaproszenie. Zainstaluj greenLy na ekranie początkowym, żeby dostawać przypomnienia.</p>
+    </section>
+    <form id="login-form" novalidate hidden>
       <h1>Zaloguj się</h1>
       <label for="login-user">Login</label>
       <input id="login-user" type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false">
       <label for="login-password">Hasło</label>
       <input id="login-password" type="password" name="password" autocomplete="current-password">
       <button type="submit" class="btn btn-primary">Wejdź</button>
+      <button type="button" class="linklike auth-forgot" id="login-forgot" aria-expanded="false" aria-controls="forgot-panel">Nie pamiętasz hasła?</button>
+      <div class="forgot" id="forgot-panel" hidden>
+        <p>Hasła nie da się zresetować samemu. Napisz na <a href="mailto:greenly@freely.digital?subject=greenLy%20%E2%80%93%20reset%20has%C5%82a">greenly@freely.digital</a> albo bezpośrednio do Szymona: podaj swój login, a dostaniesz nowe hasło, które zmienisz w Koncie po zalogowaniu.</p>
+      </div>
     </form>
     <form id="register-form" novalidate hidden>
       <h1>Załóż konto</h1>
@@ -161,6 +185,6 @@
   </li>
 </template>
 
-<script src="./app.js?v=10" type="module"></script>
+<script src="./app.js?v=11" type="module"></script>
 </body>
 </html>

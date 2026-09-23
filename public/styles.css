@@ -102,7 +102,7 @@ img { display: block; max-width: 100%; }
 .view { max-width: 640px; margin: 0 auto; padding: 8px 16px calc(96px + var(--sab)); animation: view-in .26s cubic-bezier(.2, .8, .2, 1); }
 @keyframes view-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-.login { display: flex; flex-direction: column; gap: 10px; max-width: 320px; margin: 15vh auto 0; }
+.login { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin: 6vh auto 0; }
 .login h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; }
 .login input { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 
@@ -596,3 +596,27 @@ input.is-invalid, textarea.is-invalid { border-color: var(--alarm) !important; b
 @media (prefers-reduced-motion: reduce) { .xsel-list, .xsel-chev, .xsel-btn { transition: none; } .xsel-list.open .xsel-opt { animation: none; } }
 
 .pv-ml .learned { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--water-soft); color: var(--water-ink); font-size: 12px; font-weight: 600; cursor: help; }
+
+/* start tab (intro before login) */
+.start { display: flex; flex-direction: column; gap: 14px; animation: view-in .3s cubic-bezier(.2, .8, .2, 1); }
+.start-hero { text-align: center; padding: 6px 0 2px; }
+.start-hero img { width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 10px; box-shadow: 0 6px 20px rgba(28, 51, 38, .22); }
+.start-hero h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; }
+.start-hero h1 b { color: var(--water); font-weight: 700; }
+.start-hero p { margin: 6px 0 0; color: var(--muted); font-size: 16px; }
+.start-features { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.start-features li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 14px; line-height: 1.4; animation: menu-item-in .4s cubic-bezier(.2, .8, .2, 1) both; }
+.start-features li:nth-child(1) { animation-delay: .05s; }
+.start-features li:nth-child(2) { animation-delay: .1s; }
+.start-features li:nth-child(3) { animation-delay: .15s; }
+.start-features li:nth-child(4) { animation-delay: .2s; }
+.start-features li:nth-child(5) { animation-delay: .25s; }
+.start-features .ico { flex-shrink: 0; width: 36px; height: 36px; border-radius: 10px; background: var(--water-soft); display: grid; place-items: center; font-size: 18px; }
+.start-features b { font-weight: 600; }
+.start-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.start .auth-hint { text-align: center; margin-top: 2px; }
+.auth-forgot { align-self: center; margin-top: -2px; }
+.forgot { padding: 12px 14px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); font-size: 14px; color: var(--muted); animation: view-in .24s cubic-bezier(.2, .8, .2, 1); }
+.forgot p { margin: 0; }
+.forgot a { color: var(--water-ink); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .start, .start-features li, .forgot { animation: none; } }
